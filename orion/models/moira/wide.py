@@ -15,12 +15,13 @@ import torch
 import torch.nn.functional as F
 
 from orion.models.arcus.labels import mark_hour
-from orion.models.arcus.norm import apply_scale, fit_scale
+from orion.models.arcus.norm import fit_scale
 from orion.models.door import Log, batches, dotenv, feature_scales, hours_of
 from orion.models.ledger.checkpoint import save_checkpoint
 from orion.models.ledger.log import write_event
 from orion.models.ledger.manifest import fingerprint, write_manifest
 from orion.models.moira.net import Moira
+from orion.models.moira.prepare import model_inputs, present_lanes
 from orion.models.moira.spec import BAR_MS, INPUTS, LEARN_DAYS, LOOKBACK, SELECT_DAYS
 from orion.models.moira.train import (
     BATCH,
@@ -57,7 +58,7 @@ def main() -> None:
         "written_at": stamp,
         "task": "next candle from sealed hours, every symbol",
         "symbols": learned["symbols"],
-        "inputs": len(INPUTS),
+        "inputs": model_inputs(len(INPUTS)),
         "watch_symbols": watch_ids,
         "learn_days": list(LEARN_DAYS),
         "select_days": list(SELECT_DAYS),
@@ -68,7 +69,7 @@ def main() -> None:
     write_manifest(run_dir / "manifest.json", payload)
     print(f"manifest {fingerprint(payload)}", flush=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Moira(inputs=len(INPUTS)).to(device)
+    model = Moira(inputs=model_inputs(len(learned["scales"]))).to(device)
     print(f"parameters {sum(p.numel() for p in model.parameters())} device {device}", flush=True)
     weights = _weights(learned["labels"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.95))
@@ -296,15 +297,9 @@ def _sketch(ref, open_, high, low, close) -> np.ndarray:
 
 
 def _scaled_window(features: np.ndarray, valid: np.ndarray, scales: list[dict]) -> tuple[np.ndarray, np.ndarray]:
-    finite = np.isfinite(features).all(axis=2)
-    out = np.zeros(features.shape, dtype=np.float32)
-    for column, scale in enumerate(scales):
-        values = features[:, :, column]
-        ok = np.isfinite(values)
-        if bool(ok.any()):
-            out[:, :, column][ok] = apply_scale(values[ok], scale).astype(np.float32)
-    out[~finite] = 0.0
-    return out, np.asarray(valid, dtype=bool) & finite
+    """Scale the lanes. An empty lane keeps the candle and sets its missing bit."""
+
+    return present_lanes(features, scales), np.asarray(valid, dtype=bool)
 
 
 def _weights(counts: np.ndarray) -> torch.Tensor:

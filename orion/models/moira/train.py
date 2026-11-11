@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from orion.models.arcus.decode import constrain
 from orion.models.arcus.labels import alternation, mark_hour
 from orion.models.arcus.norm import apply_scale, fit_scale
+from orion.models.moira.prepare import model_inputs, present_lanes
 from orion.models.arcus.report import metrics as _metrics
 from orion.models.arcus.report import strip as _strip
 from orion.models.arcus.report import weights as _weights
@@ -65,7 +66,7 @@ def main() -> None:
         flush=True,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Moira(inputs=len(INPUTS)).to(device)
+    model = Moira(inputs=model_inputs(len(INPUTS))).to(device)
     print(f"parameters {sum(p.numel() for p in model.parameters())} device {device}", flush=True)
     weights = _weights(learn["mark"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.95))
@@ -148,14 +149,9 @@ def fit_feature_scales(features: np.ndarray) -> list[dict]:
 
 
 def apply_feature_scales(raw: dict[str, np.ndarray], scales: list[dict]) -> None:
-    scaled = np.zeros(raw["features"].shape, dtype=np.float32)
-    finite = np.isfinite(raw["features"]).all(axis=1)
-    for column, scale in enumerate(scales):
-        values = raw["features"][:, column].astype(np.float64)
-        ok = np.isfinite(values)
-        scaled[ok, column] = apply_scale(values[ok], scale).astype(np.float32)
-    raw["features"] = scaled
-    raw["finite"] = finite
+    """Scale every lane and keep an empty lane as a center plus a missing bit."""
+
+    raw["features"] = present_lanes(raw["features"], scales)
 
 
 def windows(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -183,7 +179,6 @@ def windows(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     width = raw["features"].shape[1]
     feats = np.zeros((index.shape[0], LOOKBACK, width), dtype=np.float32)
     valid = np.zeros((index.shape[0], LOOKBACK), dtype=np.bool_)
-    finite = raw["finite"]
     values = raw["features"]
     back = np.arange(LOOKBACK - 1, -1, -1)
     long_enough = index >= LOOKBACK - 1
@@ -193,20 +188,16 @@ def windows(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         full[long_enough] = time[picked] - time[picked - (LOOKBACK - 1)] == (LOOKBACK - 1) * BAR_MS
     if np.any(full):
         grid = index[full, None] - back
-        block = values[grid]
-        good = finite[grid]
-        feats[full] = np.where(good[:, :, None], block, 0.0)
-        valid[full] = good
+        feats[full] = values[grid]
+        valid[full] = True
     for row in np.flatnonzero(~full):
         candle = int(index[row])
         start = candle
         while start > 0 and time[start] == time[start - 1] + BAR_MS and candle - start < LOOKBACK - 1:
             start -= 1
         count = candle - start + 1
-        block = values[start : candle + 1]
-        good = finite[start : candle + 1]
-        feats[row, -count:] = np.where(good[:, None], block, 0.0)
-        valid[row, -count:] = good
+        feats[row, -count:] = values[start : candle + 1]
+        valid[row, -count:] = True
     return {
         "features": feats,
         "valid": valid,
