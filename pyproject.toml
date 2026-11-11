@@ -42,10 +42,9 @@ horizon = [
 where = ["."]
 include = ["orion*"]
 
-# Lake addresses and the read window. orion/data/spec.py reads this table.
+# `bars` is the candle file. It has no feature_vec.
+# Moira opens `features`: the same hour, plus feature_vec of width 204.
 # Credentials stay in the environment and are not written here.
 [tool.orion.data]
-workers = 16
 bars = "s3://ghostbyte/warm/sec15/p={hour}/dataset.lance"
 features = "s3://ghostbyte/features/warm/sec15/p={hour}/dataset.lance"
-deals = "s3://ghostbyte/deals/v4/{day}/_gold/deals.lance"
