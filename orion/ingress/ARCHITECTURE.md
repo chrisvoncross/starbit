@@ -1,6 +1,6 @@
 # orion/ingress — Bauart
 
-Dies ist der Bauplan des kompletten Trainingsstroms. Der Ordner liefert einen Strom aus versiegelten Stunden und einen Feed, der daraus Batches macht. Er trainiert nicht. Er skaliert nicht. Er liest `orion/data` und `altes/data` zur Laufzeit nicht. Deren Verhalten, das hierher gehört, wird hier nachgebaut. Die beiden Ordner bleiben für ihre eigenen Aufrufer.
+Dies ist der Bauplan des kompletten Trainingsstroms. Der Ordner liefert einen Strom aus versiegelten Stunden und einen Feed, der daraus Batches macht. Er trainiert nicht. Er skaliert nicht. Er importiert den Rest des Repos nicht. Die beiden alten Datenordner sind gelöscht. Was von ihrem Verhalten hier gilt, steht unten.
 
 Eine versiegelte Stunde ist eine Datei, `p=<YYYY-MM-DDTHH>/dataset.lance`. Der Strom liefert dem Aufrufer immer diese eine Datei. Im Speicher liegen die Kerzen dieser Stunde und höchstens die folgende Datei im Vorgriff. Der Feed behält je Symbol den Ring der letzten Kerzen. Die Länge des Rings setzt der Aufrufer. Eine Stunde füllt viele Batches. Sie bleibt, bis `release` sie wirft.
 
@@ -8,7 +8,7 @@ Eine versiegelte Stunde ist eine Datei, `p=<YYYY-MM-DDTHH>/dataset.lance`. Der S
 
 Zwei Gruppen, weil es zwei Gründe zur Änderung gibt. `read` macht aus einer Datei Reihen und kennt keinen Batch. `feed` macht aus Reihen Batches und öffnet keine Datei. Eine dritte Gruppe darüber wäre erzwungen. Sieben Ordner nebeneinander im Wurzelordner wären nur flach.
 
-`feed` importiert `read`. `read` importiert `feed` nicht. Nichts in diesem Paket importiert `orion`, `altes`, `stardust` oder `horizon`. Gebaut ist jetzt nur die Notiz in `live`. Das Modell liegt in keiner Gruppe.
+`feed` importiert `read`. `read` importiert `feed` nicht. Beide rufen `logger.py`. Das ist keine dritte Gruppe. Nichts in diesem Paket importiert `orion`, `altes`, `stardust` oder `horizon`. Gebaut ist jetzt nur die Notiz in `live`. Das Modell liegt in keiner Gruppe. Der Modell-Ledger ist eine andere Datei.
 
 | Pfad | Aufgabe |
 |---|---|
@@ -21,18 +21,17 @@ Zwei Gruppen, weil es zwei Gründe zur Änderung gibt. `read` macht aus einer Da
 | `feed/ring.py` | Je Symbol der Ring fester Länge. |
 | `feed/batch.py` | Batches fester Größe. Symbole gemischt, Stunden nicht. |
 | `feed/cursor.py` | Die Neustart-Stelle. `mark` kommt vom Aufrufer und läuft, solange die Stunde im Speicher ist. |
+| `logger.py` | Eine Zeile je Lieferfakt, JSON, sofort geflusht. `read` und `feed` rufen sie. `read` bleibt batchblind. Ohne Pfad keine Datei. |
 | `tests/` | Dieselben Grenzen, auf Tabellen im Speicher und auf einem Ersatz für das Netz. |
 | `live/` | Neben `read` und `feed`. Jetzt nur die Notiz, dass er nicht gebaut ist. Kommt, wenn gehandelt wird. Liefert dieselbe Reihe wie `frame`. Der Feed bekommt keinen zweiten Kerzentyp. |
 
-## Übernommen aus altes/data
-
-Das Verhalten, nicht der Import.
+## Datei
 
 **Eine Datei.** `open` öffnet diese eine URI. Tests übergeben einen Ersatz und gehen nicht ins Netz. Aufzählen der Stundennamen liest keine Kerzen. Eine Liste ohne die Datei lässt die Stunde aus. Die Reihenfolge im Strom ist die Liste des Aufrufers. Der Strom sortiert sie nicht.
 
-**Eine Stunde, ein Symbol.** Pflichtspalten sind `symbol`, `open_time_ms`, `open_fp`, `high_fp`, `low_fp`, `close_fp`, `volume_fp`, `feature_vec`. Ganzzahlige Preise werden durch 1e8 geteilt. Ein Float bleibt ein Float. `symbol` ist eine Ganzzahl. Text ist ein Fehler. Eine fehlende 15s-Kerze bleibt eine Lücke in `open_time_ms`. Sie wird nicht aufgefüllt. Ein doppelter Zeitstempel in derselben Stunde behält die frühere Zeile. Stunden werden in diesem Schritt nicht aneinandergehängt. Eine leere Stunde ist eine Stunde ohne Reihen. Der Cursor geht weiter. Eine wartende Zeile aus der Stunde davor wird daran nicht geschlossen.
+**Eine Stunde, ein Symbol.** Pflichtspalten sind `symbol`, `open_time_ms`, `open_fp`, `high_fp`, `low_fp`, `close_fp`, `volume_fp`, `feature_vec`. Ganzzahlige Preise werden durch 1e8 geteilt. Ein Float bleibt ein Float. `symbol` ist eine Ganzzahl. Text ist ein Fehler. Eine fehlende 15s-Kerze bleibt eine Lücke in `open_time_ms`. Sie wird nicht aufgefüllt. Ein doppelter Zeitstempel in derselben Stunde behält die frühere Zeile. Stunden werden in diesem Schritt nicht aneinandergehängt. Eine leere Stunde hat keine Zeilen. Eine Stunde, in der jedes Symbol versteckt oder ausgeschlossen ist, hat keine Reihen und ist damit nicht leer. Der Cursor geht weiter. Eine wartende Zeile aus der Stunde davor wird an einer leeren Stunde nicht geschlossen.
 
-**Letzter echter Trade.** `last_trade_ms` ist je Symbol die Zeit des letzten echten Trades. Der Strom gibt sie nach den ausgelieferten Stunden heraus. Ein Neustart bei Stunde k bekommt die Zahl mit, die am Anfang von Stunde k galt. Die Stunden davor werden dafür nicht gelesen. Ein Symbol, das die Tick-Regel in dieser Stunde aus der Sicht nimmt, schiebt die Zahl trotzdem weiter. Ein Symbol, das beim Start schon ausgeschlossen ist, tut das nicht. Seine Kerzen werden nicht gebaut.
+**Letzter echter Trade.** `last_trade_ms` ist je Symbol die Zeit des letzten echten Trades. Der Strom gibt sie nach den ausgelieferten Stunden heraus. Ein Neustart bei Stunde k bekommt die Zahl mit, die am Anfang von Stunde k galt. Die Stunden davor werden dafür nicht gelesen. Ein Symbol, das die Tick-Regel in dieser Stunde aus der Sicht nimmt, wird nicht als Reihe gebaut und schiebt die Zahl trotzdem weiter. Dafür reichen `symbol`, `open_time_ms` und, wenn die Datei sie hat, `bar_kind` oder `trade_count`. Ein Symbol, das beim Start schon ausgeschlossen ist, wird nicht gebaut und schiebt die Zahl nicht weiter.
 
 **216 Spuren.** Auf der Platte liegen 204 in `feature_vec`. Awareness und Projection entstehen beim Lesen, je Symbol, auf den Kerzen dieser Stunde in Zeitordnung.
 
@@ -53,36 +52,34 @@ Projection, in dieser Reihenfolge: `funding_staleness_ms`, `index_staleness_ms`,
 6. `start` ist ein Index. Die Stunden davor werden nicht gelesen. Ein Index hinter der Liste ist ein Fehler. Ein Index auf das Ende liefert keine Stunde.
 7. Schließen wirft die gehaltene Stunde und den Vorgriff weg.
 
-**Tick-Regel.** Sie gilt für Stunden, die der Strom schon ausgeliefert hat. Pro Symbol, auf High, Low und Close dieser Stunde. Ganzzahlige Preise werden mit 10000 multipliziert (`1e12 / 1e8`). Floats werden mit `rint(Preis * 1e12)` auf Ganzzahl gebracht. Der Tick der Stunde ist der größte gemeinsame Teiler der von 0 verschiedenen Beträge. Über die Stunden wird er mit dem größten gemeinsamen Teiler an den bisherigen Tick gebunden. Die Spanne ist das höchste High minus das tiefste Low in diesen Einheiten. Der Schluss für die Basispunkte ist der Median der Stunden-Mediane. `tick / preis * 10000 >= 5` fällt. Der Median von `Spanne / Tick` über die bisher gelesenen Stunden fällt, wenn er `<= 4` ist. Tick oder Schluss nicht positiv: die Stunde dieses Symbols geht nicht in die Regel ein.
+**Tick-Regel.** Sie gilt für Stunden, die der Strom schon ausgeliefert hat. Pro Symbol, auf High, Low und Close dieser Stunde. Ganzzahlige Preise werden mit 10000 multipliziert (`1e12 / 1e8`). Floats werden mit `rint(Preis * 1e12)` auf Ganzzahl gebracht. Der Tick der Stunde ist der größte gemeinsame Teiler der von 0 verschiedenen Beträge. Null und ein nicht-endlicher Preis zählen nicht mit und werden nicht als 0 gelesen. Fehlt danach High, Low oder Close, geht diese Stunde dieses Symbols nicht in die Regel ein. Über die Stunden wird er mit dem größten gemeinsamen Teiler an den bisherigen Tick gebunden. Die Spanne ist das höchste High minus das tiefste Low in diesen Einheiten. Der Schluss für die Basispunkte ist der Median der Stunden-Mediane. `tick / preis * 10000 >= 5` fällt. Der Median von `Spanne / Tick` über die bisher gelesenen Stunden fällt, wenn er `<= 4` ist. Tick oder Schluss nicht positiv: die Stunde dieses Symbols geht nicht in die Regel ein.
 
 Das Symbol bleibt in der Stunde, die es trifft. Ab der nächsten Stunde fehlt es, solange die bisher gelesenen Stunden die Regel noch verletzen. Ein späterer Tick kann feiner werden, eine spätere Spanne breiter. Dann ist das Symbol in der Stunde danach wieder da. Stunden, die noch nicht gelesen sind, gehen in die Entscheidung nicht ein. Symbole, die beim Aufbau schon ausgeschlossen sind, fehlen ab der ersten Stunde und bleiben draußen. Ihre späteren Preise werden nicht mehr in die Regel genommen. Die Stunden vor `start` werden dafür nicht noch einmal gelesen.
 
-## Übernommen aus orion/data
-
-Das Verhalten, nicht der Import.
+## Eine Stunde
 
 **Dekodieren.** Die Entscheidung kommt vom Arrow-Typ und von der Rolle der Spalte. Ein ganzzahliger Preis und `volume_fp` sind Festkomma und werden durch 1e8 geteilt. Ein Float oder ein Dezimalwert behält seinen Wert. Eine Ganzzahl, deren Name auf `_fp` endet, ist Festkomma. Jede andere Ganzzahl behält ihren Wert, zum Beispiel `trade_count`. Boolesche Werte sind 0 oder 1. Null wird NaN. Ein Null in einer Schlüsselspalte (`symbol`, `open_time_ms`) ist ein Fehler, kein NaN. Eine Schlüsselspalte verlangt einen Ganzzahltyp. Ein Wörterbuch-Typ dort ist ein Fehler und wird nicht aufgelöst. Bei einer skalaren Wertspalte wird ein Wörterbuch-Typ vor dem Dekodieren aufgelöst. Ein Typ, den diese Regeln nicht kennen, ist ein Fehler.
 
 **Projektion.** Die Stunde wird mit den Pflichtspalten gelesen und mit den Spalten, die Awareness und Projection aus derselben Kerze brauchen (`bar_kind`, `trade_count`, `aux_seen`, `ticker_24h_change_fp`, `vwap_fp`, die vier Staleness-Spalten), wenn die Datei sie hat. Andere Spalten werden nicht geholt. `feature_vec` wird als Vektor gelesen, nicht Spalte für Spalte nachgebaut.
 
-**Symbolprädikat.** Der Scan nennt die Symbole, die in dieser Stunde gebaut werden sollen. Zeilen anderer Symbole, die trotzdem zurückkommen, werden vor dem Bauen der Reihen verworfen. Ein Symbol, das die Tick-Regel ab der nächsten Stunde versteckt, wird in dieser nächsten Stunde nicht materialisiert. Ob Lance die Bytes anderer Symbole stehen lässt, hängt von der Datei ab. Dieser Bauplan behauptet das nicht. Er behauptet, dass sie nicht in den Ring kommen.
+**Symbolprädikat.** `read_hour` kann die Symbole nennen, die der Scan holen soll. Zeilen anderer Symbole, die trotzdem zurückkommen, werden vor dem Dekodieren von `feature_vec` verworfen. Der Strom liest die Tabelle, die `read` zurückgibt. Die Tick-Regel braucht die Preise der Symbole, die sie gerade versteckt, sonst holt eine spätere Stunde sie nicht zurück. Diese Symbole werden in dieser Stunde nicht als Reihe gebaut. `feature_vec` wird für sie nicht dekodiert. Sie kommen nicht in den Ring. Ihr letzter echter Trade läuft weiter. Symbole, die beim Start ausgeschlossen sind, werden nicht gebaut, nicht beurteilt, und ihr letzter echter Trade bleibt stehen. Ob Lance die Bytes anderer Symbole in der Datei stehen lässt, hängt von der Datei ab. Dieser Bauplan behauptet das nicht.
 
 **Loch.** Eine fehlende Stundendatei ist ein Loch. Sie wird vermerkt, und es wird keine Kerze erfunden. Der Cursor geht weiter. Ein Loch und eine leere Stunde schließen eine wartende Zeile aus der Stunde davor nicht ab. Die Zeile wird verworfen. Die erste Kerze einer späteren vorhandenen Stunde wird nicht als ihre nächste Kerze verwendet. Kehrt das Symbol mit einem Abstand zurück, der nicht eine Kerze ist, gilt die Lückenregel für den Ring. Ein Zugangsfehler, ein anderer Lesefehler und eine Datei, der eine Pflichtspalte fehlt, werden nicht zu einem Loch gemacht. Sie brechen den Lauf ab. `feature_vec` ist eine Spalte dieser einen Datei. Fehlt sie, fehlt eine Pflichtspalte. Eine andere Breite als 204 oder 216 bricht ab.
 
 ## Nicht übernommen
 
-- Die zusammengelegte Serie über alle genannten Stunden, und der Cache dieser Serie im Speicher oder als `.npz`. Das bleibt `orion/data` für Aufrufer, die einen benannten Abschnitt als ein Feld wollen.
-- Das Fenster von sechzehn gleichzeitig offenen Stunden. Das begrenzt dort das Holen, während das Ergebnis trotzdem die ganze Spanne ist. Hier ist die Grenze eine Stunde plus eine Datei im Vorgriff.
+- Die zusammengelegte Serie über alle genannten Stunden, und der Cache dieser Serie im Speicher oder als `.npz`. Wer die Spanne eines Symbols als ein Feld will, läuft den Strom und legt nur diese Spanne selbst zusammen. Dieser Ordner tut das nicht.
+- Ein Fenster von sechzehn gleichzeitig offenen Stunden. Die Grenze ist eine Stunde plus eine Datei im Vorgriff.
 - Die Deal-Spur eines Tages, zusammengelegt über die genannten Tage. Wer sie später braucht, bekommt einen zweiten Cursor mit derselben `release`-Regel, einen Tag in der Hand. Dieser Bauplan baut ihn nicht.
 - Den Schemaschlüssel des Caches. Eine falsche Breite und ein unbekannter Typ brechen hier ohne Cache ab.
 
 ## Darüber hinaus
 
-Das hat keiner der beiden Ordner. Es gehört in dieses Paket.
+Das liegt über der einzelnen Stunde.
 
 **Ring.** Je Symbol ein Ring der Länge `lookback`: die Merkmale, die Gültigkeit je Platz, die letzte Zeit, der letzte Schluss. `lookback` setzt der Aufrufer. Der Ring aller Symbole überlebt `release`. Die Stundenfelder nicht.
 
-**Naht.** Liegt die nächste gespeicherte Kerze genau eine Kerze später in derselben Stunde, ist die Zeile fertig. Die Eingabe ist der Ring. Daneben liegen Open, High, Low, Close dieser nächsten Kerze, unskaliert. Hat `mark` sie beschriftet, liegt die Beschriftung dabei. Ist es die letzte Kerze der Stunde, wartet diese eine Zeile je Symbol auf die erste Kerze der nächsten Stunde, wenn diese genau eine Kerze später liegt. Die alte Datei wird dafür nicht noch einmal gelesen. Eine Holdout-Stunde, ein Loch, eine leere Stunde und eine fehlende 15s-Kerze verwerfen die wartende Zeile. Die Kerze hinter der Lücke ist nicht die nächste. Der Ring gilt danach als Lücke.
+**Naht.** Liegt die nächste gespeicherte Kerze genau eine Kerze später in derselben Stunde, ist die Zeile fertig. Die Eingabe ist der Ring. Daneben liegen Open, High, Low, Close dieser nächsten Kerze, unskaliert, und `ref`, der Schluss der Kerze, an der die Zeile genommen wird. Hat `mark` die nächste Kerze beschriftet, liegt die Beschriftung dabei. `mark` bekommt diese eine nächste Kerze, solange die Stunde gehalten ist. Die gehaltene Stunde liegt in dieser Zeit unter `held`. Ist es die letzte Kerze der Stunde, wartet diese eine Zeile je Symbol auf die erste Kerze der nächsten Stunde, wenn diese genau eine Kerze später liegt. Die alte Datei wird dafür nicht noch einmal gelesen. Eine Holdout-Stunde, ein Loch, eine leere Stunde und eine fehlende 15s-Kerze verwerfen die wartende Zeile. Die Kerze hinter der Lücke ist nicht die nächste. Der Ring gilt danach als Lücke. Eine fehlende Datei steht in `Stream.holes` und, sobald der Feed sie sieht, in `Feed.holes`. Eine Lücke in der Kerzenfolge steht in `Feed.gaps`.
 
 **Lücke.** Ein Abstand, der nicht genau eine Kerze ist, wird vermerkt. Es wird keine Kerze erfunden. Die Zeile, die auf die fehlende Kerze gewartet hat, wird verworfen. Die Plätze des Rings, die über die Lücke reichen, werden ungültig. Der Ring füllt sich von vorn. Der Cursor geht an der nächsten Kerze weiter, die auf der Datei liegt. Ein Symbol, das in dieser Stunde fehlt, bleibt im Ring stehen und gibt nichts ab. Kommt es mit einer Lücke zurück, gilt dieselbe Regel.
 
@@ -94,15 +91,27 @@ Die drei Folgen sind der Stand vor der Stunde am Index. Der Strom wird mit diese
 
 Die drei Folgen der Tick-Regel wachsen mit den gelesenen Stunden, eine Spanne und ein Schluss je Symbol und Stunde. Das ist klein gegen die Kerzen. Der Satz, die Länge der Stundenliste ändere am Speicher nichts, gilt für die Kerzen, nicht für diese Folgen.
 
-**Vorgriff, wenn die Datei fehlschlägt.** Das Holen der einen folgenden Datei darf eine begrenzte Zahl von Malen wiederholt werden. Die gehaltene Stunde bleibt davon unberührt. Ein Zugangsfehler wird nicht wiederholt. Ein Loch wird nicht wiederholt. Nach der Grenze bricht der Vorgriff ab, und `next` sieht den Fehler, wenn es diese Stunde verlangt.
+**Vorgriff, wenn die Datei fehlschlägt.** Das Holen der einen folgenden Datei wird wiederholt, standardmäßig dreimal. Der Aufrufer setzt die Grenze. Die gehaltene Stunde bleibt davon unberührt. Ein Zugangsfehler wird nicht wiederholt. Ein Loch wird nicht wiederholt. Nach der Grenze bricht der Vorgriff ab, und `next` sieht den Fehler, wenn es diese Stunde verlangt.
 
 **Rand des Loaders.** Ein DataLoader darf den Batch pinnen, den der Schritt gerade rechnet, und eine feste kleine Zahl weiterer fertiger Batches holen, während der Schritt rechnet. Diese Zahl wird beim Bau gesetzt und wächst nicht mit der Stundenliste. Darüber hinaus wird kein Batch vorgebaut. Er mischt die Stunden nicht. Er öffnet keine Datei. Die Dateien öffnet nur der Strom. Seine Stelle ist die Neustart-Stelle dieses Feeds. Gezählt werden die Batches, die der Schritt genommen hat.
+
+## Log
+
+Eine Instanz, Pfad vom Aufrufer, geteilt von Strom und Feed. Jede Zeile hat `ts` in UTC (`YYYY-MM-DDTHH:MM:SSZ`) und `kind`. Ohne Pfad bleibt es bei den Listen im Speicher.
+
+- `hour`. Token, `read_s` bis die Tabelle da ist, `frames_s` für den Bau der Reihen, Zeilen, Zahl der gebauten Reihen, `skipped` als die Symbol-Ids, die `hour_frames` in dieser Stunde nicht gebaut hat, `width` der Reihe nach den zwölf abgeleiteten Spuren. Keine Reihe: `width` ist null. `skipped` ist der Stand vor dieser Stunde, nicht die Menge, die die nächste Stunde versteckt.
+- `hole`. Token. Nur der Strom schreibt das. Der Feed hängt dasselbe Token nicht noch einmal an.
+- `gap`. Token der Stunde, Symbol, Grund (`candle`, `hole`, `empty`, `holdout`, `absent`, `tick`), `earlier_ms`, `later_ms`. Bei Loch, leerer Stunde, Holdout, Abwesenheit und Tick-Regel ist `later_ms` null. `absent` heißt: das Symbol hat in dieser Stunde keine Reihe und die Tick-Regel hält es nicht draußen. `tick` heißt: die Tick-Regel hält es zu Beginn dieser Stunde draußen, auch wenn die Preise dieser Stunde es für die nächste Stunde freigeben. Dieselbe Menge steht in `skipped`. Eine Holdout-Lücke nennt das erste übersprungene Holdout-Token, nicht die folgende Stunde, die gelesen wurde. Die wartende Zeile fällt in beiden Fällen weg.
+- `batch`. Zeilen, `width` der Ringbreite, `invalid` als Zahl der noch ungültigen Ringplätze.
+- `prefetch`. Token, Versuch ab 1, Sekunden, Fehlerklasse oder null.
+- `abort`. Token, Fehlerklasse, Phase `sync`, `frames` oder `tick`. Ein Zugangsfehler, eine fehlende Pflichtspalte, eine falsche Breite und ein Dekodierfehler sind das. Sie sind kein Loch.
+- `holdout`. Token. Die Datei wird nicht gelesen und ist kein Loch. Die Stunde dahinter wird im Vorgriff nicht geholt.
 
 ## Parallelität
 
 Parallel ist zweierlei, und nicht mehr.
 
-1. Die Reihen der Symbole in der Stunde, die der Aufrufer hält, dürfen gleichzeitig gebaut werden. Die Tabelle dieser Stunde ist dafür schon da. Das vergrößert die Stunde nicht.
+1. Die Reihen der Symbole in der Stunde, die der Aufrufer hält, dürfen gleichzeitig gebaut werden, höchstens acht auf einmal. Die Tabelle dieser Stunde ist dafür schon da. Das vergrößert die Stunde nicht.
 2. Die eine folgende Datei darf geholt werden, während der Schritt die gehaltene Stunde rechnet.
 
 Mehrere Stunden gleichzeitig zu holen ist ausgeschlossen. Das Fenster von sechzehn offenen Stunden wird nicht nachgebaut. Liegt der Schritt hinter dem Lesen, hält `release` den Vorgriff bei einer Datei. Es wird keine zweite Datei hinter dem Vorgriff geholt, um das Lesen zu beschäftigen.
