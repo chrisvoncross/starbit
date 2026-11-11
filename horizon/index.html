@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GhostByte Horizon - What the Transformer Sees (Lightweight Charts v5.2)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #0a0a0a;
+            color: #d1d4dc;
+            overflow: hidden;
+        }
+
+        #chart-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #legend {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: transparent;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #d1d4dc;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        #legend .header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+
+        #legend .symbol {
+            font-weight: 600;
+            font-size: 14px;
+            color: #d1d4dc;
+        }
+
+        #legend .status {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: rgba(0, 0, 0, 0.6);
+        }
+
+        #legend .status.connected {
+            color: #26a69a;
+        }
+
+        #legend .status.disconnected {
+            color: #ef5350;
+        }
+
+        #legend .status.loading {
+            color: #888;
+        }
+
+        #legend .ohlc {
+            display: flex;
+            gap: 10px;
+            font-size: 13px;
+        }
+
+        #legend .ohlc-item {
+            display: flex;
+            gap: 4px;
+        }
+
+        #legend .label {
+            color: #787b86;
+            font-weight: 500;
+        }
+
+        #legend .value {
+            font-weight: 400;
+        }
+
+        /* ---- Transformer-view proof HUD (integrity rule made visible) ---- */
+        #proof-hud {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            max-width: 46vw;
+            background: rgba(10, 14, 20, 0.86);
+            border: 1px solid #2a3340;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #cfd6e0;
+            z-index: 1200;
+            display: none;
+        }
+        #proof-hud.visible { display: block; }
+        #proof-hud .hud-title { font-weight: 700; color: #7fd1c1; margin-bottom: 4px; }
+        #proof-hud .kv { display: flex; gap: 6px; }
+        #proof-hud .kv .k { color: #6b7787; min-width: 118px; }
+        #proof-hud .kv .v { color: #e6ebf2; word-break: break-all; }
+        #proof-hud .ready { color: #26a69a; font-weight: 700; }
+        #proof-hud .notready { color: #ef5350; font-weight: 700; }
+
+        /* ---- Central Symbol-Swap + Timeframe-Swap toolbar ---- */
+        #hz-toolbar {
+            position: absolute;
+            bottom: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            background: rgba(10, 14, 20, 0.92);
+            border: 1px solid #2a3340;
+            border-radius: 8px;
+            padding: 7px 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            color: #cfd6e0;
+            z-index: 2500;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+        }
+        .hz-switcher { display: flex; align-items: center; gap: 6px; }
+        .hz-switcher-label { color: #6b7787; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
+        .hz-switcher-btn {
+            background: #172230; color: #cfd6e0; border: 1px solid #2a3340;
+            border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px;
+        }
+        .hz-switcher-btn:hover { background: #1f2d3d; }
+        .hz-switcher-select {
+            background: #0c1017; color: #e6ebf2; border: 1px solid #2a3340;
+            border-radius: 4px; padding: 3px 6px; max-width: 220px; font-size: 12px;
+        }
+        .hz-switcher-filter {
+            background: #0c1017; color: #e6ebf2; border: 1px solid #2a3340;
+            border-radius: 4px; padding: 3px 6px; width: 88px; font-size: 12px;
+        }
+        .hz-tf-seg { display: flex; border: 1px solid #2a3340; border-radius: 5px; overflow: hidden; }
+        .hz-tf-btn {
+            background: #0c1017; color: #9aa4b2; border: none; border-right: 1px solid #2a3340;
+            padding: 4px 10px; cursor: pointer; font-size: 12px; position: relative;
+        }
+        .hz-tf-btn:last-child { border-right: none; }
+        .hz-tf-btn:hover:not(:disabled) { background: #172230; color: #cfd6e0; }
+        .hz-tf-btn.active { background: #1f6f63; color: #fff; font-weight: 700; }
+        .hz-tf-btn.unavailable { color: #4a5361; cursor: not-allowed; text-decoration: line-through; }
+        .hz-tf-livedot {
+            display: inline-block; width: 6px; height: 6px; margin-left: 5px;
+            border-radius: 50%; background: #26a69a; vertical-align: middle;
+        }
+
+        /* ---- NOT-READY first-class state overlay ---- */
+        #notready-overlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(6, 8, 12, 0.92);
+            z-index: 2000;
+            padding: 40px;
+        }
+        #notready-overlay.visible { display: flex; }
+        #notready-overlay .card {
+            max-width: 720px;
+            background: #10151d;
+            border: 1px solid #3a2530;
+            border-radius: 10px;
+            padding: 24px 28px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+        #notready-overlay .card h2 { color: #ef5350; font-size: 18px; margin-bottom: 8px; }
+        #notready-overlay .card p { color: #9aa4b2; font-size: 13px; margin-bottom: 12px; }
+        #notready-overlay .card ul { color: #d1d4dc; font-size: 12px; padding-left: 18px; }
+        #notready-overlay .card li { margin-bottom: 6px; }
+    </style>
+</head>
+<body>
+    <div id="legend">
+        <div class="header">
+            <div class="symbol">DOGS_USDT</div>
+            <div id="status" class="status loading">🔄 Connecting...</div>
+        </div>
+        <div class="ohlc">
+            <div class="ohlc-item">
+                <span class="label">O</span>
+                <span class="value" id="legend-open">-</span>
+            </div>
+            <div class="ohlc-item">
+                <span class="label">H</span>
+                <span class="value" id="legend-high">-</span>
+            </div>
+            <div class="ohlc-item">
+                <span class="label">L</span>
+                <span class="value" id="legend-low">-</span>
+            </div>
+            <div class="ohlc-item">
+                <span class="label">C</span>
+                <span class="value" id="legend-close">-</span>
+            </div>
+            <div class="ohlc-item">
+                <span class="value" id="legend-change">-</span>
+            </div>
+        </div>
+    </div>
+    <div id="chart-container"></div>
+
+    <!-- Central, reusable Symbol-Swap + Timeframe-Swap controls (mounted by
+         the transformer-view controller; usable by any Horizon view). -->
+    <div id="hz-toolbar"></div>
+
+    <!-- Transformer-view proof HUD (integrity rule: window-relative + pin proof) -->
+    <div id="proof-hud"></div>
+
+    <!-- NOT-READY first-class state (dataset not available yet) -->
+    <div id="notready-overlay">
+        <div class="card">
+            <h2>Transformer view NOT READY</h2>
+            <p>The canonical <code>feature_vec[203]</code> gold could not be pinned for this
+               interval. Horizon never fabricates the model input — it degrades to this
+               honest state until the gold is minted.</p>
+            <ul id="notready-reasons"></ul>
+        </div>
+    </div>
+
+    <!-- JS Error Overlay (DEBUG) -->
+    <div id="error-overlay" style="display:none; position:fixed; bottom:10px; left:10px; right:10px; max-height:40vh; overflow-y:auto; background:rgba(200,0,0,0.9); color:#fff; font-family:monospace; font-size:12px; padding:10px; border-radius:6px; z-index:99999; white-space:pre-wrap; word-break:break-all;"></div>
+    <script>
+    (function(){
+        var el = document.getElementById('error-overlay');
+        var msgs = [];
+        function show(msg) {
+            msgs.push(msg);
+            if (msgs.length > 20) msgs.shift();
+            el.textContent = msgs.join('\n───\n');
+            el.style.display = 'block';
+        }
+        window.addEventListener('error', function(e) {
+            show('❌ ERROR: ' + e.message + '\n   at ' + (e.filename||'?') + ':' + (e.lineno||'?') + ':' + (e.colno||'?'));
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+            show('❌ PROMISE: ' + (e.reason && e.reason.stack ? e.reason.stack : e.reason));
+        });
+        // Patch console.error to also show on overlay
+        var origErr = console.error;
+        console.error = function() {
+            origErr.apply(console, arguments);
+            show('⚠️ ' + Array.from(arguments).map(function(a){
+                if (a instanceof Error) return a.message + '\n' + (a.stack || '');
+                if (typeof a === 'object') try { return JSON.stringify(a); } catch(e) { return String(a); }
+                return String(a);
+            }).join(' '));
+        };
+    })();
+    </script>
+
+    <!-- Horizon runtime config, injected server-side (websocket_server read_root) -->
+    <script>
+        window.__HORIZON_MODE__ = "%%HORIZON_MODE%%";
+        window.__HORIZON_SYMBOL__ = "DOGS_USDT";
+    </script>
+
+    <!-- Lightweight Charts v5.2.0 — VENDORED LOCALLY (upgraded from 5.0.9; v5
+         API-compatible, adds the custom-series hitTest the feature heatmap uses).
+         Served offline from vendor/ so the pod needs no internet at runtime.
+         CDN fallback (only if you deliberately un-vendor):
+         https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js -->
+    <script src="vendor/lightweight-charts.standalone.production.js"></script>
+
+    <!-- Mode dispatcher: raw_farmer -> chart_realtime.js (verbatim legacy base viz);
+         transformer_view -> transformer_view.js (the reuse-seam entry). -->
+    <script type="module" src="bootstrap.js?v=starbit3"></script>
+</body>
+</html>
+

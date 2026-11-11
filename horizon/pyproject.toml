@@ -1,0 +1,32 @@
+[project]
+name = "ghostbyte-horizon"
+version = "0.1.0"
+description = "Horizon — 'what the Orion transformer sees' visualization server (read-only consumer of Orion's data control-plane) + retained raw-farmer chart."
+requires-python = ">=3.10"
+dependencies = [
+  # --- web server (both modes) ---
+  "fastapi",
+  "uvicorn[standard]",
+  "numpy",
+  "pyarrow",
+  # --- Lance Python wrapper ---
+  # The image already carries pylance 14 (import name lance). A pin under 9
+  # would downgrade that reader. Horizon only reads sealed hours.
+  "pylance>=14,<15",
+  "python-dotenv",
+  "xxhash",
+  "loguru",
+  "aiohttp",
+  "numba",
+  # --- raw_farmer mode also uses market_data_sync (imported from repo root); ---
+  # --- transformer_view mode also needs the Orion runtime (torch, pydantic,   ---
+  #     etc.) which the shared venv already provides via orion/pyproject.toml.  ---
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Horizon is started from this directory. The file names the libraries.
+packages = []

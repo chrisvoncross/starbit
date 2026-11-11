@@ -1,0 +1,33 @@
+symbols 703
+learn 2026-09-29 read 101.4s symbols 671 marks 120.9s
+learn 2026-09-30 read 100.4s symbols 663 marks 103.8s
+learn 2026-10-01 read 89.3s symbols 662 marks 113.1s
+learn 2026-10-02 read 89.1s symbols 664 marks 114.6s
+learn 2026-10-03 read 90.9s symbols 664 marks 110.0s
+learn 2026-10-04 read 83.6s symbols 653 marks 107.8s
+learn 2026-10-05 read 83.5s symbols 641 marks 113.3s
+learn 2026-10-06 read 108.7s symbols 639 marks 110.8s
+learn 2026-10-07 read 100.1s symbols 639 marks 111.2s
+learn 2026-10-08 read 95.6s symbols 643 marks 100.1s
+learn 2026-10-09 read 83.0s symbols 644 marks 114.2s
+learn 2026-10-10 read 95.3s symbols 644 marks 110.5s
+learn 2026-10-11 read 95.4s symbols 642 marks 112.2s
+learn 2026-10-12 read 101.2s symbols 644 marks 99.7s
+learn 2026-10-13 read 101.8s symbols 644 marks 108.1s
+decisions 56018898 watch [130, 1, 2, 3, 4, 5, 6, 7]
+select 2026-10-14 read 16.7s symbols 8 marks 15.2s
+select 2026-10-15 read 14.4s symbols 7 marks 10.0s
+select 2026-10-16 read 14.6s symbols 7 marks 9.9s
+select 2026-10-17 read 13.7s symbols 7 marks 9.6s
+select 2026-10-18 read 13.3s symbols 7 marks 9.8s
+select 2026-10-19 read 16.5s symbols 7 marks 9.9s
+select 2026-10-20 read 15.1s symbols 7 marks 9.8s
+select 2026-10-21 read 14.2s symbols 7 marks 9.8s
+select 2026-10-22 read 14.3s symbols 7 marks 9.8s
+select 2026-10-23 read 14.7s symbols 7 marks 9.8s
+/workspace-global/starbit/orion/data/features/matrix.py:104: RuntimeWarning: invalid value encountered in cast
+  seen = np.asarray(aux["aux_seen"], dtype=np.uint8)
+select 2026-10-24 read 15.2s symbols 7 marks 9.7s
+select 2026-10-25 read 12.4s symbols 7 marks 9.6s
+select 2026-10-26 read 16.3s symbols 7 marks 10.1s
+select 2026-10-27 read 13.8s symbols 7 marks 9.8s

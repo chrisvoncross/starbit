@@ -1,0 +1,12 @@
+altes/
+.env
+mainmexckey.py
+*.egg-info/
+*.json
+*.pt
+*.npz
+*.csv
+__pycache__/
+*.pyc
+pid
+btc_usdt_deals_hour.tar.gz

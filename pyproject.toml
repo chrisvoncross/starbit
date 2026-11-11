@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "starbit"
+version = "0.1.0"
+description = "Orion reads sealed hours and scores the handoff candle."
+requires-python = ">=3.11"
+dependencies = []
+
+# One install for the reader and the handoff model.
+# The import name is lance. The PyPI name is pylance. Do not install the package named lance.
+# Listing a remote hour uses boto3. Credentials stay in the environment.
+# The CUDA wheel already on the image. A PyPI torch install replaces it.
+[project.optional-dependencies]
+orion = [
+    "numpy>=1.26",
+    "pyarrow>=18,<20",
+    "pylance>=0.20",
+    "boto3>=1.35",
+    "torch>=2.4",
+]
+# Chart server. The import name is lance; the PyPI name is pylance.
+# Stay on the 14 series already on the image. Do not install the package named lance.
+# Torch stays the CUDA wheel from the orion extra. This list does not install it.
+horizon = [
+    "fastapi",
+    "uvicorn[standard]",
+    "numpy>=1.26",
+    "pyarrow>=18,<20",
+    "pylance>=14,<15",
+    "boto3>=1.35",
+    "python-dotenv",
+    "xxhash",
+    "loguru",
+    "aiohttp",
+    "numba",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["orion*"]
+
+# Lake addresses and the read window. orion/data/spec.py reads this table.
+# Credentials stay in the environment and are not written here.
+[tool.orion.data]
+workers = 16
+bars = "s3://ghostbyte/warm/sec15/p={hour}/dataset.lance"
+features = "s3://ghostbyte/features/warm/sec15/p={hour}/dataset.lance"
+deals = "s3://ghostbyte/deals/v4/{day}/_gold/deals.lance"
