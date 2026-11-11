@@ -12,8 +12,11 @@ import torch.nn.functional as F
 from orion.models.arcus.data import apply_scales, dotenv, fit_scales, load_split, window
 from orion.models.arcus.decode import constrain
 from orion.models.arcus.labels import alternation
+from orion.models.arcus.report import metrics as _metrics
+from orion.models.arcus.report import strip as _strip
+from orion.models.arcus.report import weights as _weights
 from orion.models.arcus.net import Arcus
-from orion.models.arcus.spec import EXAM_FROM, HIGH, INPUTS, LEARN_DAYS, LOOKBACK, LOW, SAMPLE_HOUR, SELECT_DAYS
+from orion.models.arcus.spec import EXAM_FROM, INPUTS, LEARN_DAYS, LOOKBACK, SAMPLE_HOUR, SELECT_DAYS
 from orion.models.ledger.checkpoint import save_checkpoint
 from orion.models.ledger.log import write_event
 from orion.models.ledger.manifest import fingerprint, write_manifest
@@ -181,50 +184,12 @@ def call_slice(pred: np.ndarray, truth: np.ndarray) -> dict:
     }
 
 
-def _metrics(pred: np.ndarray, truth: np.ndarray) -> dict:
-    star = truth > 0
-    called = pred > 0
-    hit = called & (pred == truth)
-    calls = int(called.sum())
-    stars = int(star.sum())
-    precision = float(hit.sum() / calls) if calls else 0.0
-    recall = float(hit.sum() / stars) if stars else 0.0
-    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "alternation": alternation(pred),
-        "calls": calls,
-        "stars": stars,
-        "hits": int(hit.sum()),
-        "false_calls": int((called & ~hit).sum()),
-        "missed": int((star & ~hit).sum()),
-        "called_low": int((pred == LOW).sum()),
-        "called_high": int((pred == HIGH).sum()),
-        "true_low": int((truth == LOW).sum()),
-        "true_high": int((truth == HIGH).sum()),
-    }
-
-
-def _weights(marks: np.ndarray) -> torch.Tensor:
-    counts = np.bincount(marks, minlength=3).astype(np.float64)
-    weights = counts.sum() / np.maximum(counts, 1.0)
-    weights = weights / weights.mean()
-    return torch.tensor(weights, dtype=torch.float32)
-
-
 def _tensor(rows: dict, device: torch.device) -> dict[str, torch.Tensor]:
     return {
         "features": torch.from_numpy(rows["features"]).to(device),
         "valid": torch.from_numpy(rows["valid"]).to(device),
         "mark": torch.from_numpy(rows["mark"].astype(np.int64)).to(device),
     }
-
-
-def _strip(marks: np.ndarray) -> str:
-    glyph = {0: ".", 1: "T", 2: "H"}
-    return "".join(glyph[int(item)] for item in marks)
 
 
 def _hour_ms(token: str) -> int:

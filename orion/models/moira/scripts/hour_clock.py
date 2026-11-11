@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 import orion.models.moira.train as moira_train
 from orion.models.arcus.labels import mark_hour
-from orion.models.arcus.train import _weights
+from orion.models.arcus.report import weights as _weights
 from orion.models.buchband.data import _book, local_deals, resolve_book
 from orion.models.moira.net import Moira
 from orion.models.moira.spec import LOOKBACK, TICK

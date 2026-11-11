@@ -9,15 +9,16 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from orion.data import Spec, Store, load
-from orion.models.arcus.data import dotenv, hours_of
 from orion.models.arcus.decode import constrain
 from orion.models.arcus.labels import alternation, mark_hour
 from orion.models.arcus.norm import apply_scale, fit_scale
-from orion.models.arcus.train import _metrics, _strip, _weights
+from orion.models.arcus.report import metrics as _metrics
+from orion.models.arcus.report import strip as _strip
+from orion.models.arcus.report import weights as _weights
 from orion.models.ledger.checkpoint import save_checkpoint
 from orion.models.ledger.log import write_event
 from orion.models.ledger.manifest import fingerprint, write_manifest
+from orion.models.door import Log, dotenv, symbol_hours
 from orion.models.moira.net import Moira
 from orion.models.moira.spec import BAR_MS, HIGH, INPUTS, LEARN_DAYS, LOOKBACK, LOW, NONE, SELECT_DAYS, SPREAD, TICK
 
@@ -47,8 +48,9 @@ def main() -> None:
     }
     write_manifest(run_dir / "manifest.json", payload)
     print(f"manifest {fingerprint(payload)}", flush=True)
-    learn_series = read_symbol(LEARN_DAYS, "learn", BTC)
-    select_series = read_symbol(SELECT_DAYS, "select", BTC)
+    delivery = Log(run_dir / "ingress.jsonl")
+    learn_series = read_symbol(LEARN_DAYS, "learn", BTC, log=delivery)
+    select_series = read_symbol(SELECT_DAYS, "select", BTC, log=delivery)
     scales = fit_feature_scales(learn_series["features"])
     apply_feature_scales(learn_series, scales)
     apply_feature_scales(select_series, scales)
@@ -117,33 +119,24 @@ def main() -> None:
     write_event(events, run=stamp, side="path", kind="done", best_select_f1=best)
 
 
-def read_symbol(days: tuple[str, ...], split: str, symbol: int) -> dict[str, np.ndarray]:
-    """One symbol, straight from the sealed candles. No deal walk."""
+def read_symbol(days: tuple[str, ...], split: str, symbol: int, log: Log | None = None) -> dict[str, np.ndarray]:
+    """One symbol, one hour at a time. The label is applied per hour."""
 
     print(f"{split} read {symbol}", flush=True)
-    laid = load(
-        Spec(split=split, symbols=(symbol,), hours=hours_of(days), features=True),
-        store=Store(),
-    )
-    series = laid.series[symbol]
-    time = np.asarray(series.open_time_ms, dtype=np.int64)
-    high = np.asarray(series.high, dtype=np.float64)
-    low = np.asarray(series.low, dtype=np.float64)
-    marks = np.zeros(time.shape[0], dtype=np.int64)
-    hour = time // 3_600_000
-    cuts = np.flatnonzero(np.diff(hour)) + 1 if time.size else np.zeros(0, dtype=np.int64)
-    bounds = np.concatenate(([0], cuts, [time.shape[0]]))
-    for lo, hi in zip(bounds[:-1], bounds[1:]):
-        marks[lo:hi] = mark_hour(high[lo:hi], low[lo:hi])
-    return {
-        "time": time,
-        "open": np.asarray(series.open, dtype=np.float64),
-        "high": high,
-        "low": low,
-        "close": np.asarray(series.close, dtype=np.float64),
-        "mark": marks,
-        "features": np.asarray(series.features, dtype=np.float32),
-    }
+    pieces: dict[str, list[np.ndarray]] = {key: [] for key in ("time", "open", "high", "low", "close", "mark", "features")}
+    found = False
+    for hour in symbol_hours(days, symbol, log=log):
+        found = True
+        pieces["time"].append(hour["time"])
+        pieces["open"].append(hour["open"])
+        pieces["high"].append(hour["high"])
+        pieces["low"].append(hour["low"])
+        pieces["close"].append(hour["close"])
+        pieces["mark"].append(mark_hour(hour["high"], hour["low"]))
+        pieces["features"].append(hour["features"])
+    if not found:
+        raise RuntimeError(f"{split} {int(symbol)} has no candles")
+    return {key: np.concatenate(chunks) for key, chunks in pieces.items()}
 
 
 def fit_feature_scales(features: np.ndarray) -> list[dict]:
