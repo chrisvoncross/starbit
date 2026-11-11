@@ -1,6 +1,6 @@
 """On this hour: does the chart size fit the wick, and does five seconds name the next candle better than fifteen.
 
-Horizon and the models stay as they are. The net and the score are Moira's.
+Horizon and the models stay as they are. The net and the score are Nova's.
 """
 
 from __future__ import annotations
@@ -9,12 +9,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-import orion.models.moira.train as moira_train
+import orion.models.nova.train as nova_train
 from orion.models.arcus.train import _weights
 from orion.models.buchband.data import _book, local_deals, resolve_book
 from orion.models.ledger.count import Candle, candle_count
-from orion.models.moira.net import Moira
-from orion.models.moira.scripts.hour_clock import COLUMNS, HOLD, _fold, _take, _tensor
+from orion.models.nova.net import Nova
+from orion.models.nova.scripts.hour_clock import COLUMNS, HOLD, _fold, _take, _tensor
 from orion.scripts.zero_fee_clocks import CONTRACT, TICK, search
 
 BARS_MS = (1_000, 5_000, 10_000, 15_000)
@@ -68,30 +68,30 @@ def _name(bar_ms: int, deals, book, seed: int, *, book_on: bool) -> None:
         raw["features"][:, list(BOOK)] = 0.0
     n = int(raw["time"].shape[0])
     cut = int(n * HOLD)
-    scales = moira_train.fit_feature_scales(raw["features"][:cut])
-    moira_train.apply_feature_scales(raw, scales)
-    moira_train.BAR_MS = bar_ms
-    packed = moira_train.windows(raw)
+    scales = nova_train.fit_feature_scales(raw["features"][:cut])
+    nova_train.apply_feature_scales(raw, scales)
+    nova_train.BAR_MS = bar_ms
+    packed = nova_train.windows(raw)
     hold = packed["time"] >= int(raw["time"][cut])
     learn = _take(packed, ~hold)
     select = _take(packed, hold)
-    sketch_scales = moira_train.fit_sketch(learn["sketch"])
-    learn["sketch_z"] = moira_train.apply_sketch(learn["sketch"], sketch_scales)
-    select["sketch_z"] = moira_train.apply_sketch(select["sketch"], sketch_scales)
+    sketch_scales = nova_train.fit_sketch(learn["sketch"])
+    learn["sketch_z"] = nova_train.apply_sketch(learn["sketch"], sketch_scales)
+    select["sketch_z"] = nova_train.apply_sketch(select["sketch"], sketch_scales)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(seed)
-    model = Moira(inputs=len(COLUMNS)).to(device)
+    model = Nova(inputs=len(COLUMNS)).to(device)
     weights = _weights(learn["mark"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.95))
     order_base = np.arange(learn["mark"].shape[0])
     packed_learn = _tensor(learn, device)
     best = None
     best_row = None
-    for epoch in range(moira_train.EPOCHS):
+    for epoch in range(nova_train.EPOCHS):
         model.train()
         order = np.random.default_rng(seed * 100 + epoch).permutation(order_base)
-        for start in range(0, order.size, moira_train.BATCH):
-            take = order[start : start + moira_train.BATCH]
+        for start in range(0, order.size, nova_train.BATCH):
+            take = order[start : start + nova_train.BATCH]
             opt.zero_grad(set_to_none=True)
             logits, sketch, aux = model(packed_learn["features"][take], packed_learn["valid"][take])
             loss = (
@@ -102,7 +102,7 @@ def _name(bar_ms: int, deals, book, seed: int, *, book_on: bool) -> None:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-        measured = moira_train.score(model, select, sketch_scales, device, bar_ms=bar_ms)
+        measured = nova_train.score(model, select, sketch_scales, device, bar_ms=bar_ms)
         if measured["calls"] > 0 and (best is None or measured["f1"] > best):
             best = measured["f1"]
             best_row = measured

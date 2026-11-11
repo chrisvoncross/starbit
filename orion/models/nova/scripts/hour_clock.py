@@ -1,7 +1,7 @@
-"""Moira's next-candle task on this hour, from scratch, at 5s, 10s, and 15s.
+"""Nova's next-candle task on this hour, from scratch, at 5s, 10s, and 15s.
 
-Nothing under ``orion.models.moira`` except this script is changed. The net,
-the loss, the star label, and the score are the ones Moira already uses.
+Nothing under ``orion.models.nova`` except this script is changed. The net,
+the loss, the star label, and the score are the ones Nova already uses.
 The candles are folded here from the local deal file and the local book.
 """
 
@@ -11,12 +11,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-import orion.models.moira.train as moira_train
+import orion.models.nova.train as nova_train
 from orion.models.arcus.labels import mark_hour
 from orion.models.arcus.report import weights as _weights
 from orion.models.buchband.data import _book, local_deals, resolve_book
-from orion.models.moira.net import Moira
-from orion.models.moira.spec import LOOKBACK, TICK
+from orion.models.nova.net import Nova
+from orion.models.nova.spec import LOOKBACK, TICK
 
 BARS_MS = (5_000, 10_000, 15_000)
 HOLD = 0.8
@@ -42,7 +42,7 @@ def main() -> None:
     deals = local_deals(lo, hi)
     print(
         f"hour book {book['time'].shape[0]} deals {deals['time'].shape[0]} "
-        f"lookback {LOOKBACK} epochs {moira_train.EPOCHS} holdout last fifth",
+        f"lookback {LOOKBACK} epochs {nova_train.EPOCHS} holdout last fifth",
         flush=True,
     )
     for bar_ms in BARS_MS:
@@ -55,22 +55,22 @@ def _run(bar_ms: int, deals: dict[str, np.ndarray], book: dict[str, np.ndarray])
     cut = int(n * HOLD)
     if cut < LOOKBACK or n - cut < 2:
         raise RuntimeError(f"{bar_ms} ms is too short: {n} bars")
-    scales = moira_train.fit_feature_scales(raw["features"][:cut])
-    moira_train.apply_feature_scales(raw, scales)
-    moira_train.BAR_MS = bar_ms
-    packed = moira_train.windows(raw)
+    scales = nova_train.fit_feature_scales(raw["features"][:cut])
+    nova_train.apply_feature_scales(raw, scales)
+    nova_train.BAR_MS = bar_ms
+    packed = nova_train.windows(raw)
     boundary = int(raw["time"][cut])
     hold = packed["time"] >= boundary
     learn = _take(packed, ~hold)
     select = _take(packed, hold)
     if learn["mark"].shape[0] < 2 or select["mark"].shape[0] < 1:
         raise RuntimeError(f"{bar_ms} ms split is empty")
-    sketch_scales = moira_train.fit_sketch(learn["sketch"])
-    learn["sketch_z"] = moira_train.apply_sketch(learn["sketch"], sketch_scales)
-    select["sketch_z"] = moira_train.apply_sketch(select["sketch"], sketch_scales)
+    sketch_scales = nova_train.fit_sketch(learn["sketch"])
+    learn["sketch_z"] = nova_train.apply_sketch(learn["sketch"], sketch_scales)
+    select["sketch_z"] = nova_train.apply_sketch(select["sketch"], sketch_scales)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(0)
-    model = Moira(inputs=int(packed["features"].shape[-1])).to(device)
+    model = Nova(inputs=int(packed["features"].shape[-1])).to(device)
     weights = _weights(learn["mark"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.95))
     index = np.arange(learn["mark"].shape[0])
@@ -81,14 +81,14 @@ def _run(bar_ms: int, deals: dict[str, np.ndarray], book: dict[str, np.ndarray])
         f"stars learn {int((learn['mark'] > 0).sum())} holdout {int((select['mark'] > 0).sum())} device {device}",
         flush=True,
     )
-    for epoch in range(moira_train.EPOCHS):
+    for epoch in range(nova_train.EPOCHS):
         model.train()
         order = np.random.default_rng(epoch).permutation(index)
         total = 0.0
         seen = 0
         packed_learn = _tensor(learn, device)
-        for start in range(0, order.size, moira_train.BATCH):
-            take = order[start : start + moira_train.BATCH]
+        for start in range(0, order.size, nova_train.BATCH):
+            take = order[start : start + nova_train.BATCH]
             opt.zero_grad(set_to_none=True)
             logits, sketch, aux = model(packed_learn["features"][take], packed_learn["valid"][take])
             loss = (
@@ -102,7 +102,7 @@ def _run(bar_ms: int, deals: dict[str, np.ndarray], book: dict[str, np.ndarray])
             width = int(take.size)
             total += float(loss.detach()) * width
             seen += width
-        measured = moira_train.score(model, select, sketch_scales, device, bar_ms=bar_ms)
+        measured = nova_train.score(model, select, sketch_scales, device, bar_ms=bar_ms)
         kept = measured["calls"] > 0 and (best is None or measured["f1"] > best)
         print(
             f"bar {bar_ms // 1000}s epoch {epoch} loss {total / max(seen, 1):.4f} "

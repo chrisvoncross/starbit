@@ -6,10 +6,10 @@ import torch
 from torch import nn
 
 from orion.models.arcus.blocks import Block, RMSNorm
-from orion.models.moira.spec import D_MODEL, EXPERTS, HEADS, HIDDEN, LAYERS, TOP_K
+from orion.models.nova.spec import D_MODEL, EXPERTS, HEADS, HIDDEN, LAYERS, TOP_K
 
 
-class Moira(nn.Module):
+class Nova(nn.Module):
     def __init__(self, inputs: int) -> None:
         super().__init__()
         self.project = nn.Linear(inputs, D_MODEL)

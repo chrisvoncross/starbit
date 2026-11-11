@@ -20,10 +20,10 @@ from orion.models.door import Log, batches, dotenv, feature_scales, hours_of
 from orion.models.ledger.checkpoint import save_checkpoint
 from orion.models.ledger.log import write_event
 from orion.models.ledger.manifest import fingerprint, write_manifest
-from orion.models.moira.net import Moira
-from orion.models.moira.prepare import model_inputs, present_lanes
-from orion.models.moira.spec import BAR_MS, INPUTS, LEARN_DAYS, LOOKBACK, SELECT_DAYS
-from orion.models.moira.train import (
+from orion.models.nova.net import Nova
+from orion.models.nova.prepare import model_inputs, present_lanes
+from orion.models.nova.spec import BAR_MS, INPUTS, LEARN_DAYS, LOOKBACK, SELECT_DAYS
+from orion.models.nova.train import (
     BATCH,
     EPOCHS,
     apply_feature_scales,
@@ -44,7 +44,7 @@ HOUR_MS = 3_600_000
 def main() -> None:
     dotenv()
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = ROOT / "orion" / "runs" / stamp / "moira-wide"
+    run_dir = ROOT / "orion" / "runs" / stamp / "nova-wide"
     run_dir.mkdir(parents=True, exist_ok=True)
     delivery = Log(run_dir / "ingress.jsonl")
     learned = _survey(LEARN_DAYS, delivery)
@@ -69,7 +69,7 @@ def main() -> None:
     write_manifest(run_dir / "manifest.json", payload)
     print(f"manifest {fingerprint(payload)}", flush=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Moira(inputs=model_inputs(len(learned["scales"]))).to(device)
+    model = Nova(inputs=model_inputs(len(learned["scales"]))).to(device)
     print(f"parameters {sum(p.numel() for p in model.parameters())} device {device}", flush=True)
     weights = _weights(learned["labels"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.95))

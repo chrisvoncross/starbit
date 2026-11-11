@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from orion.models.buchband.data import _book, local_deals, resolve_book
-from orion.models.moira.scripts.hour_clock import _fold
+from orion.models.nova.scripts.hour_clock import _fold
 
 BANK = 2000.0
 RISK = 0.01

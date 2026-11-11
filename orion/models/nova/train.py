@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from orion.models.arcus.decode import constrain
 from orion.models.arcus.labels import alternation, mark_hour
 from orion.models.arcus.norm import apply_scale, fit_scale
-from orion.models.moira.prepare import model_inputs, present_lanes
+from orion.models.nova.prepare import model_inputs, present_lanes
 from orion.models.arcus.report import metrics as _metrics
 from orion.models.arcus.report import strip as _strip
 from orion.models.arcus.report import weights as _weights
@@ -20,8 +20,8 @@ from orion.models.ledger.checkpoint import save_checkpoint
 from orion.models.ledger.log import write_event
 from orion.models.ledger.manifest import fingerprint, write_manifest
 from orion.models.door import Log, dotenv, symbol_hours
-from orion.models.moira.net import Moira
-from orion.models.moira.spec import BAR_MS, HIGH, INPUTS, LEARN_DAYS, LOOKBACK, LOW, NONE, SELECT_DAYS, SPREAD, TICK
+from orion.models.nova.net import Nova
+from orion.models.nova.spec import BAR_MS, HIGH, INPUTS, LEARN_DAYS, LOOKBACK, LOW, NONE, SELECT_DAYS, SPREAD, TICK
 
 BTC = 130
 
@@ -33,7 +33,7 @@ BATCH = 256
 def main() -> None:
     dotenv()
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = ROOT / "orion" / "runs" / stamp / "moira"
+    run_dir = ROOT / "orion" / "runs" / stamp / "nova"
     run_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "written_at": stamp,
@@ -66,7 +66,7 @@ def main() -> None:
         flush=True,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Moira(inputs=model_inputs(len(INPUTS))).to(device)
+    model = Nova(inputs=model_inputs(len(INPUTS))).to(device)
     print(f"parameters {sum(p.numel() for p in model.parameters())} device {device}", flush=True)
     weights = _weights(learn["mark"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.95))
@@ -238,7 +238,7 @@ def restore_sketch(scaled: np.ndarray, scales: list[dict]) -> np.ndarray:
     return out
 
 
-def score(model: Moira, rows: dict, sketch_scales: list[dict], device: torch.device, bar_ms: int = BAR_MS) -> dict:
+def score(model: Nova, rows: dict, sketch_scales: list[dict], device: torch.device, bar_ms: int = BAR_MS) -> dict:
     logits, sketch = _forward(model, rows, device)
     pred = constrain(logits, rows["time"])
     metrics = _metrics(pred, rows["mark"])
@@ -332,7 +332,7 @@ def _is_local(price: np.ndarray, time: np.ndarray, index: int, bar_ms: int, *, h
     return checks > 0 and ok
 
 
-def _forward(model: Moira, rows: dict, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
+def _forward(model: Nova, rows: dict, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     packed = _tensor(rows, device)
     logits_out = []

@@ -43,7 +43,7 @@ where = ["."]
 include = ["orion*"]
 
 # `bars` is the candle file. It has no feature_vec.
-# Moira opens `features`: the same hour, plus feature_vec of width 204.
+# Nova opens `features`: the same hour, plus feature_vec of width 204.
 # Credentials stay in the environment and are not written here.
 [tool.orion.data]
 bars = "s3://ghostbyte/warm/sec15/p={hour}/dataset.lance"

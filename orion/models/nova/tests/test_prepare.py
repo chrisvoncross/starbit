@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from orion.models.moira.prepare import model_inputs, present_lanes
-from orion.models.moira.spec import BAR_MS, LOOKBACK
-from orion.models.moira.train import apply_feature_scales, windows
-from orion.models.moira.wide import _scaled_window
+from orion.models.nova.prepare import model_inputs, present_lanes
+from orion.models.nova.spec import BAR_MS, LOOKBACK
+from orion.models.nova.train import apply_feature_scales, windows
+from orion.models.nova.wide import _scaled_window
 
 
 def test_an_empty_lane_is_the_center_and_sets_its_bit():
