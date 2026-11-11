@@ -3,6 +3,7 @@ altes/
 mainmexckey.py
 *.egg-info/
 *.json
+orion/runs/**/ingress.jsonl
 *.pt
 *.npz
 *.csv
