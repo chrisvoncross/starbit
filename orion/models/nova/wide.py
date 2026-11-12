@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import multiprocessing
 import os
 import signal
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +43,7 @@ from orion.models.nova.net import Nova
 from orion.models.nova.pipe import ahead, feed_batches
 from orion.models.nova.prepare import frame_from_stats, model_inputs, present_windows
 from orion.models.nova.scale import natural_of
+from orion.models.nova.select_read import pull_select, serve_select
 from orion.models.nova.state import GROUPS, state_layout, state_loss
 from orion.models.nova.spec import BAR_MS, INPUTS, LEARN_DAYS, LOOKBACK, SELECT_DAYS
 from orion.models.nova.train import (
@@ -51,6 +54,9 @@ from orion.models.nova.train import (
     apply_sketch,
     fit_sketch,
     log_state_lanes,
+    CoinFold,
+    KLLSketch,
+    forward_batch,
     read_symbol,
     score,
     windows,
@@ -60,6 +66,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BTC = 130
 WATCH = 8
 STEP_LOG = 1000
+SELECT_EVERY = 10_000
 HOUR_MS = 3_600_000
 
 
@@ -157,7 +164,6 @@ def main() -> None:
     signal.signal(signal.SIGINT, _on_stop)
     saver = Saver(ckpt)
     select_score = {
-        "raw": None,
         "precision": None,
         "recall": None,
         "f1": None,
@@ -165,34 +171,166 @@ def main() -> None:
         "symbols": None,
         "step": None,
     }
+    select_job = {
+        "proc": None,
+        "conn": None,
+        "error": None,
+        "judge": None,
+        "scales": None,
+        "folds": {},
+        "high_kll": None,
+        "low_kll": None,
+        "at_step": None,
+    }
 
-    def _select_all(at_step: int) -> None:
-        """Legal-hour score of every symbol present on the select days."""
+    def _drop_select_process() -> None:
+        conn = select_job.get("conn")
+        proc = select_job.get("proc")
+        select_job["conn"] = None
+        select_job["proc"] = None
+        if conn is not None:
+            try:
+                conn.send("stop")
+            except OSError:
+                pass
+            try:
+                conn.close()
+            except OSError:
+                pass
+        if proc is not None and proc.is_alive():
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                proc.terminate()
+            proc.join(timeout=5)
 
-        if select_score["raw"] is None:
-            select_score["raw"] = _gather_select(delivery)
-        parts = []
-        symbols = sorted(select_score["raw"])
-        print(f"select symbols {len(symbols)}", flush=True)
-        for index, symbol in enumerate(symbols, start=1):
-            block = windows(select_score["raw"][symbol], layout)
-            if int(block["mark"].shape[0]) == 0:
-                continue
-            block["time"] = block["time"] + int(symbol) * 1_000_000 * HOUR_MS
-            block["sketch_z"] = apply_sketch(block["sketch"], sketch_scales)
-            training = model.training
-            measured = score(model, block, sketch_scales, device, layout)
-            if training:
-                model.train()
-            parts.append(measured)
-            print(f"select {index}/{len(symbols)} {symbol}", flush=True)
+    def _fail_select(text) -> None:
+        print(f"select failed {text}", flush=True)
+        select_job["judge"] = None
+        select_job["folds"] = {}
+        _drop_select_process()
+
+    def _start_select(at_step: int) -> None:
+        """Freeze this step and stream the select hours. The step does not wait."""
+
+        frozen = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+        judge = Nova(model_inputs(len(INPUTS)), layout)
+        judge.load_state_dict(frozen)
+        judge.to(device)
+        judge.eval()
+        select_job["judge"] = judge
+        select_job["scales"] = copy.deepcopy(sketch_scales)
+        select_job["folds"] = {}
+        select_job["high_kll"] = KLLSketch()
+        select_job["low_kll"] = KLLSketch()
+        select_job["at_step"] = at_step
+        ctx = multiprocessing.get_context("spawn")
+        parent, child = ctx.Pipe(duplex=True)
+        proc = ctx.Process(target=serve_select, args=(child,), name="nova-select-read", daemon=False)
+        proc.start()
+        child.close()
+        select_job["proc"] = proc
+        select_job["conn"] = parent
+        print(f"select freeze step {at_step} process {proc.pid}", flush=True)
+
+    def _finish_select() -> None:
+        parts = [fold.finish() for fold in select_job["folds"].values()]
         pooled = _pool_select(parts)
         select_score["precision"] = pooled["precision"]
         select_score["recall"] = pooled["recall"]
         select_score["f1"] = pooled["f1"]
         select_score["rides_ideal_share"] = pooled["rides_ideal_share"]
         select_score["symbols"] = pooled["symbols"]
-        select_score["step"] = at_step
+        select_score["step"] = select_job["at_step"]
+        high = select_job["high_kll"]
+        low = select_job["low_kll"]
+        print(
+            f"select done step {select_job['at_step']} symbols {pooled['symbols']} "
+            f"kll_high {high.stored()} kll_low {low.stored()} "
+            f"high_ticks {high.quantile(0.5):.2f} low_ticks {low.quantile(0.5):.2f}",
+            flush=True,
+        )
+        select_job["judge"] = None
+        select_job["folds"] = {}
+        _drop_select_process()
+
+    def _score_message(msg: dict) -> None:
+        symbol = int(msg["symbol"])
+        fold = select_job["folds"].get(symbol)
+        if fold is None:
+            fold = CoinFold()
+            select_job["folds"][symbol] = fold
+        count = int(np.asarray(msg["mark"]).shape[0])
+        logits, sketch, _state = forward_batch(
+            select_job["judge"],
+            {"features": msg["features"], "valid": msg["valid"]},
+            device,
+            0,
+            count,
+        )
+        del msg["features"], msg["valid"], _state
+        fold.take(
+            logits,
+            sketch,
+            msg,
+            select_job["scales"],
+            select_job["high_kll"],
+            select_job["low_kll"],
+            hour_done=bool(msg["hour_done"]),
+        )
+
+    def _select_tick(at_step: int, epoch: int) -> None:
+        """Start a select every 10000 steps after epoch 0. A running pass is left alone."""
+
+        if (
+            epoch >= 1
+            and at_step % SELECT_EVERY == 0
+            and select_job["judge"] is None
+            and select_job["proc"] is None
+        ):
+            try:
+                _start_select(at_step)
+            except Exception as exc:
+                _fail_select(exc)
+                return
+        conn = select_job.get("conn")
+        if conn is None or select_job.get("judge") is None:
+            return
+        msg = pull_select(conn)
+        if msg is None:
+            proc = select_job.get("proc")
+            if proc is not None and not proc.is_alive():
+                msg = pull_select(conn)
+                if msg is None:
+                    _fail_select(f"select reader exited {proc.exitcode}")
+                    return
+            else:
+                return
+        if not isinstance(msg, dict):
+            _fail_select(f"select sent {msg!r}")
+            return
+        kind = msg.get("kind")
+        if kind == "error":
+            _fail_select(msg.get("trace", "select failed"))
+            return
+        if kind == "end":
+            try:
+                _finish_select()
+            except Exception as exc:
+                _fail_select(exc)
+            return
+        if kind != "batch":
+            _fail_select(f"select sent {kind}")
+            return
+        try:
+            _score_message(msg)
+        except Exception as exc:
+            _fail_select(exc)
+            return
+        try:
+            conn.send("ack")
+        except OSError as exc:
+            _fail_select(exc)
 
     def _totals(total, price_total, state_total, part_total, part_seen, seen) -> dict:
         return {
@@ -341,8 +479,7 @@ def main() -> None:
                     sketch_abs,
                 )
                 walk = _walk(pack["times"], pack["taken"], pack["raw_valid"], pack["raw_features"], pack["used"])
-                if step % STEP_LOG == 0:
-                    _select_all(step)
+                _select_tick(step, epoch)
                 step_fields = step_tally.fields()
                 since = tally.fields()
                 print(
@@ -471,6 +608,7 @@ def main() -> None:
         saver.wait()
         write_event(events, run=stamp, side="path", kind="done", best_select_state=best)
     finally:
+        _drop_select_process()
         saver.wait()
 
 
@@ -645,45 +783,6 @@ def _window_batch(
     state = prepared[:, flat].astype(np.float32)
     present = (1.0 - prepared[:, lanes + flat]).astype(np.float32)
     return feats, np.asarray(valid, dtype=bool), state, present, used
-
-
-def _gather_select(log: Log) -> dict[int, dict]:
-    """Every symbol that has candles on the select days. The ids come from the hours."""
-
-    from orion.ingress import Stream
-    from orion.models.door.hours import open_hour
-
-    books: dict[int, dict[str, list]] = {}
-    stream = Stream(hours_of(SELECT_DAYS), open_hour, log=log)
-    try:
-        while True:
-            try:
-                hour = next(stream)
-            except StopIteration:
-                break
-            for series in hour.series:
-                if len(series) == 0:
-                    continue
-                symbol = int(series.symbol)
-                book = books.get(symbol)
-                if book is None:
-                    book = {key: [] for key in ("time", "open", "high", "low", "close", "features")}
-                    books[symbol] = book
-                book["time"].append(np.asarray(series.open_time_ms, dtype=np.int64))
-                book["open"].append(np.asarray(series.open, dtype=np.float64))
-                book["high"].append(np.asarray(series.high, dtype=np.float64))
-                book["low"].append(np.asarray(series.low, dtype=np.float64))
-                book["close"].append(np.asarray(series.close, dtype=np.float64))
-                book["features"].append(np.asarray(series.features, dtype=np.float32))
-            stream.release()
-    finally:
-        stream.close()
-    raw = {}
-    for symbol, book in books.items():
-        item = {key: np.concatenate(chunks) for key, chunks in book.items()}
-        item["mark"] = mark_hour(item["high"], item["low"])
-        raw[int(symbol)] = item
-    return raw
 
 
 def _pool_select(parts: list[dict]) -> dict:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import random
 from pathlib import Path
 
 import numpy as np
@@ -184,11 +185,8 @@ def read_symbol(days: tuple[str, ...], split: str, symbol: int, log: Log | None 
     return {key: np.concatenate(chunks) for key, chunks in pieces.items()}
 
 
-def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> dict[str, np.ndarray]:
-    """One row per close whose next candle is the next bar.
-
-    Raw lanes are divided by the mean and standard deviation of that row's lookback.
-    """
+def window_pairs(raw: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Close index, next index, and the log OHLC of rows one bar apart."""
 
     time = raw["time"]
     follows = np.zeros(time.shape[0], dtype=np.bool_)
@@ -207,8 +205,18 @@ def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> di
         axis=1,
     )
     ok = np.isfinite(sketch).all(axis=1) & (ref > 0)
-    index = index[ok]
-    nxt = nxt[ok]
+    return index[ok], nxt[ok], sketch[ok]
+
+
+def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> dict[str, np.ndarray]:
+    """One row per close whose next candle is the next bar.
+
+    Raw lanes are divided by the mean and standard deviation of that row's lookback.
+    """
+
+    time = raw["time"]
+    index, nxt, sketch = window_pairs(raw)
+    ref = raw["close"][index]
     values = raw["features"]
     back = np.arange(LOOKBACK - 1, -1, -1)
     long_enough = index >= LOOKBACK - 1
@@ -222,8 +230,8 @@ def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> di
         "valid": valid,
         "mark": raw["mark"][nxt].astype(np.int64),
         "time": time[nxt],
-        "sketch": sketch[ok].astype(np.float64),
-        "ref": ref[ok].astype(np.float64),
+        "sketch": sketch.astype(np.float64),
+        "ref": ref.astype(np.float64),
         "this_open": raw["open"][index].astype(np.float64),
         "this_close": raw["close"][index].astype(np.float64),
         "next_open": raw["open"][nxt].astype(np.float64),
@@ -323,6 +331,20 @@ def score(
     bar_ms: int = BAR_MS,
 ) -> dict:
     logits, sketch, state_hat = _forward(model, rows, device)
+    return judge_rows(logits, sketch, state_hat, rows, sketch_scales, layout, bar_ms)
+
+
+def judge_rows(
+    logits: np.ndarray,
+    sketch: np.ndarray,
+    state_hat: np.ndarray,
+    rows: dict,
+    sketch_scales: list[dict],
+    layout: StateLayout | None = None,
+    bar_ms: int = BAR_MS,
+) -> dict:
+    """Legal-hour reading of one full symbol. ``constrain`` sees every row."""
+
     pred = constrain(logits, rows["time"])
     metrics = _metrics(pred, rows["mark"])
     metrics["alternation"] = alternation(pred)
@@ -349,6 +371,170 @@ def score(
         metrics[f"select_{name}"] = report.get(name)
     metrics["select_state"] = report.get("state")
     return metrics
+
+
+class KLLSketch:
+    """One-pass quantile sketch. Stored items stay at ``k`` per level.
+
+    Level ``h`` has weight ``2**h``. A new level appears only when the one
+    below overflows, so the count of levels is logarithmic in the stream.
+    The median is ``quantile(0.5)``. The rank error is the price of that size.
+    """
+
+    def __init__(self, k: int = 200, levels: int = 40) -> None:
+        self.k = int(k)
+        self.max_levels = int(levels)
+        self.compactors: list[list[float]] = []
+        self.weights: list[int] = []
+        self.n = 0
+        self._rng = random.Random(0)
+
+    def add_many(self, values: np.ndarray) -> None:
+        data = np.asarray(values, dtype=np.float64).ravel()
+        data = data[np.isfinite(data)]
+        for value in data.tolist():
+            self.add(float(value))
+
+    def add(self, value: float) -> None:
+        self.n += 1
+        if not self.compactors:
+            self.compactors.append([])
+            self.weights.append(1)
+        self.compactors[0].append(float(value))
+        self._repair(0)
+
+    def _repair(self, height: int) -> None:
+        while height < len(self.compactors) and len(self.compactors[height]) > self.k:
+            self._compact(height)
+            height += 1
+
+    def _compact(self, height: int) -> None:
+        items = sorted(self.compactors[height])
+        offset = self._rng.randrange(2)
+        kept = items[offset::2]
+        self.compactors[height] = []
+        if height + 1 == self.max_levels:
+            self.compactors[height] = kept
+            return
+        if height + 1 == len(self.compactors):
+            self.compactors.append([])
+            self.weights.append(self.weights[height] * 2)
+        self.compactors[height + 1].extend(kept)
+
+    def stored(self) -> int:
+        return sum(len(items) for items in self.compactors)
+
+    def quantile(self, q: float) -> float:
+        pairs = []
+        for items, weight in zip(self.compactors, self.weights):
+            for value in items:
+                pairs.append((value, weight))
+        if not pairs:
+            return 0.0
+        pairs.sort()
+        total = sum(weight for _value, weight in pairs)
+        need = float(q) * total
+        acc = 0
+        for value, weight in pairs:
+            acc += weight
+            if acc >= need:
+                return float(value)
+        return float(pairs[-1][0])
+
+
+class CoinFold:
+    """Legal-hour totals for one coin. Tick errors go into fixed sketches.
+
+    Rides cross hours. The open hour is dropped after ``constrain``.
+    """
+
+    def __init__(self) -> None:
+        self.hits = 0
+        self.calls = 0
+        self.stars = 0
+        self.rides = 0
+        self.ideal = 0
+        self._pending: tuple[int, bool] | None = None
+        self._open: dict[str, list[np.ndarray]] | None = None
+
+    def take(
+        self,
+        logits: np.ndarray,
+        sketch: np.ndarray,
+        rows: dict,
+        scales: list[dict],
+        high_kll: KLLSketch,
+        low_kll: KLLSketch,
+        *,
+        hour_done: bool,
+    ) -> None:
+        slot = self._open
+        if slot is None:
+            slot = {key: [] for key in ("logits", "sketch", "time", "mark", "ref", "next_high", "next_low")}
+            self._open = slot
+        slot["logits"].append(np.asarray(logits))
+        slot["sketch"].append(np.asarray(sketch))
+        for key in ("time", "mark", "ref", "next_high", "next_low"):
+            slot[key].append(np.asarray(rows[key]))
+        if not hour_done:
+            return
+        block = {key: np.concatenate(slot[key]) for key in ("time", "mark", "ref", "next_high", "next_low")}
+        logits_all = np.concatenate(slot["logits"])
+        sketch_all = np.concatenate(slot["sketch"])
+        self._open = None
+        self._fold_hour(logits_all, sketch_all, block, scales, high_kll, low_kll)
+
+    def _fold_hour(
+        self,
+        logits: np.ndarray,
+        sketch: np.ndarray,
+        rows: dict,
+        scales: list[dict],
+        high_kll: KLLSketch,
+        low_kll: KLLSketch,
+    ) -> None:
+        pred = constrain(logits, rows["time"])
+        mark = np.asarray(rows["mark"])
+        called = pred > 0
+        self.hits += int((called & (pred == mark)).sum())
+        self.calls += int(called.sum())
+        self.stars += int((mark > 0).sum())
+        high = np.asarray(rows["next_high"], dtype=np.float64)
+        low = np.asarray(rows["next_low"], dtype=np.float64)
+        for index in np.flatnonzero(called).tolist():
+            side = int(pred[index])
+            matched = side == int(mark[index])
+            pending = self._pending
+            if pending is not None and pending[0] != side:
+                self.rides += 1
+                if pending[1] and matched:
+                    self.ideal += 1
+            self._pending = (side, matched)
+        restored = restore_sketch(sketch, scales)
+        ref = np.asarray(rows["ref"], dtype=np.float64)
+        high_kll.add_many(np.abs(ref * np.exp(restored[:, 1]) - high) / TICK)
+        low_kll.add_many(np.abs(ref * np.exp(restored[:, 2]) - low) / TICK)
+
+    def finish(self) -> dict:
+        if self._open is not None:
+            raise RuntimeError("select hour was not closed")
+        precision = 0.0 if self.calls == 0 else float(self.hits / self.calls)
+        recall = 0.0 if self.stars == 0 else float(self.hits / self.stars)
+        if precision + recall == 0:
+            f1 = 0.0
+        else:
+            f1 = 2 * precision * recall / (precision + recall)
+        return {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "rides": self.rides,
+            "ideal": self.ideal,
+            "rides_ideal_share": 0.0 if self.rides == 0 else float(self.ideal / self.rides),
+            "hits": self.hits,
+            "calls": self.calls,
+            "stars": self.stars,
+        }
 
 
 def other_side(open_: np.ndarray, close: np.ndarray) -> np.ndarray:
@@ -419,21 +605,30 @@ def _is_local(price: np.ndarray, time: np.ndarray, index: int, bar_ms: int, *, h
     return checks > 0 and ok
 
 
+def forward_batch(
+    model: Nova, rows: dict, device: torch.device, start: int, stop: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One batch of an already scaled symbol. The caller keeps the card."""
+
+    model.eval()
+    features = torch.from_numpy(np.ascontiguousarray(rows["features"][start:stop])).to(device)
+    valid = torch.from_numpy(np.ascontiguousarray(rows["valid"][start:stop])).to(device)
+    with torch.no_grad():
+        logits, sketch, state, _aux = model(features, valid)
+    return logits.float().cpu().numpy(), sketch.float().cpu().numpy(), state.float().cpu().numpy()
+
+
 def _forward(model: Nova, rows: dict, device: torch.device) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
-    packed = _tensor(rows, device)
+    count = int(rows["mark"].shape[0])
     logits_out = []
     sketch_out = []
     state_out = []
-    with torch.no_grad():
-        for start in range(0, rows["mark"].shape[0], BATCH):
-            logits, sketch, state, _aux = model(
-                packed["features"][start : start + BATCH],
-                packed["valid"][start : start + BATCH],
-            )
-            logits_out.append(logits.float().cpu().numpy())
-            sketch_out.append(sketch.float().cpu().numpy())
-            state_out.append(state.float().cpu().numpy())
+    for start in range(0, count, BATCH):
+        logits, sketch, state = forward_batch(model, rows, device, start, min(count, start + BATCH))
+        logits_out.append(logits)
+        sketch_out.append(sketch)
+        state_out.append(state)
     return np.concatenate(logits_out), np.concatenate(sketch_out), np.concatenate(state_out)
 
 
