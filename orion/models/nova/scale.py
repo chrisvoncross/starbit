@@ -76,11 +76,18 @@ def apply_window(
     """Store ``(natural - mean) / used`` on the finite entries."""
 
     raw = np.asarray(natural, dtype=np.float64)
-    scaled = (raw - mean) / used
     keep = np.isfinite(raw) if finite is None else np.asarray(finite, dtype=bool)
     stored = np.zeros(raw.shape, dtype=np.float32)
-    if bool(np.any(keep)):
-        stored[keep] = _finite_float(scaled[keep])
+    if not bool(np.any(keep)):
+        return stored
+    scaled = np.empty(raw.shape, dtype=np.float64)
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        np.subtract(raw, mean, out=scaled)
+        np.divide(scaled, used, out=scaled)
+        np.copyto(stored, scaled, where=keep, casting="unsafe")
+    bad = keep & ~np.isfinite(stored)
+    if bool(np.any(bad)):
+        stored[bad] = _finite_float(np.asarray(scaled, dtype=np.float64)[bad])
     return stored
 
 
@@ -108,43 +115,80 @@ def _natural(values: np.ndarray, scales: list[dict]) -> np.ndarray:
     """Row-local unit. The touch is the same row, not a learned level."""
 
     raw = np.asarray(values, dtype=np.float64)
-    out = np.array(raw, dtype=np.float64, copy=True)
+    if not raw.flags.c_contiguous:
+        raw = np.ascontiguousarray(raw)
+    out = np.empty(raw.shape, dtype=np.float64)
     _units(out, raw, scales)
     return out
 
 
 def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
-    """Write log1p and mid into ``out``. The source columns stay in ``raw``."""
+    """Write each contiguous run straight into ``out``.
 
-    mid = None
-    mid_ok = None
-    for index, scale in enumerate(scales):
+    Book columns of one unit sit in one slice. A slice is a view, so the
+    write does not gather those columns through an index list. The values
+    match one column at a time.
+    """
+
+    count = len(scales)
+    index = 0
+    mid_cache: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+    while index < count:
+        scale = scales[index]
         unit = scale.get("unit", "identity")
-        if unit == "identity":
-            continue
-        column = raw[..., index]
-        dest = out[..., index]
-        dest[:] = np.nan
         if unit == "log1p":
-            ok = np.isfinite(column) & (column >= 0.0)
-        elif unit == "touch":
-            touch = raw[..., int(scale["touch"])]
+            start = index
+            index += 1
+            while index < count and scales[index].get("unit", "identity") == "log1p":
+                index += 1
+            src = raw[..., start:index]
+            dest = out[..., start:index]
+            ok = np.isfinite(src) & (src >= 0.0)
+            dest.fill(np.nan)
+            if bool(np.any(ok)):
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    np.log1p(src, out=dest, where=ok)
+            continue
+        if unit == "mid":
+            bid = int(scale["touch_bid"])
+            ask = int(scale["touch_ask"])
+            start = index
+            index += 1
+            while index < count:
+                nxt = scales[index]
+                if nxt.get("unit", "identity") != "mid":
+                    break
+                if int(nxt["touch_bid"]) != bid or int(nxt["touch_ask"]) != ask:
+                    break
+                index += 1
+            key = (bid, ask)
+            if key not in mid_cache:
+                mid = (raw[..., bid] + raw[..., ask]) / 2.0
+                mid_cache[key] = (mid, np.isfinite(mid) & (mid > 0.0))
+            mid, mid_ok = mid_cache[key]
+            src = raw[..., start:index]
+            dest = out[..., start:index]
+            ok = np.isfinite(src) & mid_ok[..., None]
+            dest.fill(np.nan)
+            if bool(np.any(ok)):
+                np.subtract(src, mid[..., None], out=dest, where=ok)
+            continue
+        if unit == "touch":
+            touch_at = int(scale["touch"])
+            column = raw[..., index]
+            dest = out[..., index]
+            touch = raw[..., touch_at]
             ok = np.isfinite(column) & np.isfinite(touch) & (touch > 0.0)
+            dest.fill(np.nan)
             if bool(np.any(ok)):
-                dest[ok] = column[ok] - touch[ok]
+                np.subtract(column, touch, out=dest, where=ok)
+            index += 1
             continue
-        elif unit == "mid":
-            if mid is None:
-                mid = (raw[..., int(scale["touch_bid"])] + raw[..., int(scale["touch_ask"])]) / 2.0
-                mid_ok = np.isfinite(mid) & (mid > 0.0)
-            ok = np.isfinite(column) & mid_ok
-            if bool(np.any(ok)):
-                dest[ok] = column[ok] - mid[ok]
-            continue
-        else:
-            continue
-        if bool(np.any(ok)):
-            dest[ok] = np.log1p(column[ok])
+        start = index
+        index += 1
+        while index < count and scales[index].get("unit", "identity") == "identity":
+            index += 1
+        out[..., start:index] = raw[..., start:index]
 
 
 def _finite_float(scaled: np.ndarray) -> np.ndarray:

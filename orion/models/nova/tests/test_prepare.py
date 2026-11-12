@@ -110,6 +110,47 @@ def test_the_window_scale_matches_the_population_formula():
     assert np.array_equal(stored[..., :4], reference)
 
 
+def test_grouped_units_match_one_column_at_a_time():
+    from orion.models.nova.scale import column_units
+    from orion.models.nova.spec import INPUTS
+
+    rng = np.random.default_rng(4)
+    features = rng.normal(size=(4, 8, len(INPUTS)))
+    features[:, :, 0] = np.abs(features[:, :, 0]) * 100 + 1
+    features[:, :, 1] = features[:, :, 0] + 0.5
+    features[0, 2, 4] = np.nan
+    features[1, 1, 8] = -2
+    valid = np.ones((4, 8), dtype=bool)
+    valid[2, 3] = False
+    stored, mean, used = present_windows(features, valid, INPUTS)
+    raw = np.array(features, dtype=np.float64, copy=True)
+    scales = column_units(INPUTS)
+    mid = None
+    mid_ok = None
+    for index, scale in enumerate(scales):
+        unit = scale.get("unit", "identity")
+        if unit == "identity":
+            continue
+        column = features[..., index]
+        dest = raw[..., index]
+        dest[:] = np.nan
+        if unit == "log1p":
+            ok = np.isfinite(column) & (column >= 0.0)
+            if np.any(ok):
+                dest[ok] = np.log1p(column[ok])
+        elif unit == "mid":
+            if mid is None:
+                mid = (features[..., scale["touch_bid"]] + features[..., scale["touch_ask"]]) / 2.0
+                mid_ok = np.isfinite(mid) & (mid > 0.0)
+            ok = np.isfinite(column) & mid_ok
+            if np.any(ok):
+                dest[ok] = column[ok] - mid[ok]
+    got = natural_of(features, INPUTS)
+    assert np.array_equal(got, raw, equal_nan=True)
+    assert stored.shape[-1] == model_inputs(len(INPUTS))
+    assert mean.shape == used.shape == (4, len(INPUTS))
+
+
 def test_a_price_distance_is_scaled_by_the_window_not_a_tick():
     names = ("bid_price_l0", "ask_price_l0")
     features = np.array(
