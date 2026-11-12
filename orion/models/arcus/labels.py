@@ -32,36 +32,51 @@ def mark_hour(high: np.ndarray, low: np.ndarray, spread: float = SPREAD) -> np.n
     parent_low_flip = np.zeros(n, dtype=np.int64)
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
+    floor = _NONE_CASH / 2
     for exit in range(1, n):
         if flat[exit - 1] > flat[exit]:
             flat[exit] = flat[exit - 1]
             parent_flat_kind[exit] = 3
             parent_flat_index[exit] = exit - 1
-        out_high = float(high[exit])
-        out_low = float(low[exit])
-        for entry in range(exit):
-            long_net = _move(float(low[entry]), out_high, up=True, spread=spread)
-            if long_net is not None:
-                _keep_long(
-                    flat[entry] + long_net, entry, exit, 0,
-                    at_high, parent_high_entry, parent_high_flip, flat, parent_flat_kind, parent_flat_index,
-                )
-                if at_low[entry] > _NONE_CASH / 2:
-                    _keep_long(
-                        at_low[entry] + long_net, entry, exit, 1,
-                        at_high, parent_high_entry, parent_high_flip, flat, parent_flat_kind, parent_flat_index,
-                    )
-            short_net = _move(float(high[entry]), out_low, up=False, spread=spread)
-            if short_net is not None:
-                _keep_short(
-                    flat[entry] + short_net, entry, exit, 0,
-                    at_low, parent_low_entry, parent_low_flip, flat, parent_flat_kind, parent_flat_index,
-                )
-                if at_high[entry] > _NONE_CASH / 2:
-                    _keep_short(
-                        at_high[entry] + short_net, entry, exit, 1,
-                        at_low, parent_low_entry, parent_low_flip, flat, parent_flat_kind, parent_flat_index,
-                    )
+        out_high = high[exit]
+        out_low = low[exit]
+        entry_low = low[:exit]
+        entry_high = high[:exit]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            move_long = (out_high - entry_low) / entry_low
+            move_short = (entry_high - out_low) / entry_high
+        valid_long = (entry_low > 0.0) & (out_high > 0.0) & (out_high > entry_low) & (move_long > spread)
+        valid_short = (entry_high > 0.0) & (out_low > 0.0) & (out_low < entry_high) & (move_short > spread)
+        base = flat[:exit]
+        cash_l0 = np.where(valid_long, base + move_long, _NONE_CASH)
+        cash_l1 = np.where(valid_long & (at_low[:exit] > floor), at_low[:exit] + move_long, _NONE_CASH)
+        cash_s0 = np.where(valid_short, base + move_short, _NONE_CASH)
+        cash_s1 = np.where(valid_short & (at_high[:exit] > floor), at_high[:exit] + move_short, _NONE_CASH)
+        use_l1 = cash_l1 > cash_l0
+        best_long = np.where(use_l1, cash_l1, cash_l0)
+        if best_long.size and float(best_long.max()) > floor:
+            chosen = int(np.argmax(best_long))
+            at_high[exit] = best_long[chosen]
+            parent_high_entry[exit] = chosen
+            parent_high_flip[exit] = 1 if bool(use_l1[chosen]) else 0
+        use_s1 = cash_s1 > cash_s0
+        best_short = np.where(use_s1, cash_s1, cash_s0)
+        if best_short.size and float(best_short.max()) > floor:
+            chosen = int(np.argmax(best_short))
+            at_low[exit] = best_short[chosen]
+            parent_low_entry[exit] = chosen
+            parent_low_flip[exit] = 1 if bool(use_s1[chosen]) else 0
+        best = cash_l0.copy()
+        side = np.zeros(exit, dtype=np.int64)
+        for cash, next_side in ((cash_l1, 0), (cash_s0, 1), (cash_s1, 1)):
+            take = cash > best
+            best = np.where(take, cash, best)
+            side = np.where(take, next_side, side)
+        if best.size and float(best.max()) > flat[exit + 1]:
+            chosen = int(np.argmax(best))
+            flat[exit + 1] = best[chosen]
+            parent_flat_kind[exit + 1] = HIGH if int(side[chosen]) == 0 else LOW
+            parent_flat_index[exit + 1] = exit
         if flat[exit] > flat[exit + 1]:
             flat[exit + 1] = flat[exit]
             parent_flat_kind[exit + 1] = 3
@@ -108,41 +123,6 @@ def alternation(marks: np.ndarray) -> float:
     if stars.size < 2:
         return 1.0
     return float(np.mean(stars[1:] != stars[:-1]))
-
-
-def _move(entry: float, exit: float, *, up: bool, spread: float) -> float | None:
-    if not (entry > 0.0 and exit > 0.0):
-        return None
-    if up and exit <= entry:
-        return None
-    if not up and exit >= entry:
-        return None
-    move = (exit - entry) / entry if up else (entry - exit) / entry
-    if not (move > spread):
-        return None
-    return float(move)
-
-
-def _keep_long(cash, entry, exit, flip, at_high, parent_entry, parent_flip, flat, flat_kind, flat_index) -> None:
-    if cash > at_high[exit]:
-        at_high[exit] = cash
-        parent_entry[exit] = entry
-        parent_flip[exit] = flip
-    if cash > flat[exit + 1]:
-        flat[exit + 1] = cash
-        flat_kind[exit + 1] = HIGH
-        flat_index[exit + 1] = exit
-
-
-def _keep_short(cash, entry, exit, flip, at_low, parent_entry, parent_flip, flat, flat_kind, flat_index) -> None:
-    if cash > at_low[exit]:
-        at_low[exit] = cash
-        parent_entry[exit] = entry
-        parent_flip[exit] = flip
-    if cash > flat[exit + 1]:
-        flat[exit + 1] = cash
-        flat_kind[exit + 1] = LOW
-        flat_index[exit + 1] = exit
 
 
 def _paint(marks: np.ndarray, index: int, side: int) -> None:

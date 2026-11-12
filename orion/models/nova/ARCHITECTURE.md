@@ -74,7 +74,7 @@ Die Kerzen-Skizze ist ein anderer Teiler. `train.fit_sketch` ruft `orion.models.
 
 Der Preisverlust ist die gewichtete Kreuzentropie auf der nächsten Marke, plus Smooth-L1 auf der skalierten Skizze, plus `0.01` mal `aux`. Der Gesamtverlust ist dieser Preisverlust plus der Zustandsterm. Die Gradienten werden auf Norm 1 beschnitten.
 
-Die Marke kommt aus `orion.models.arcus.labels.mark_hour`. Die Werte sind `NONE` 0, `LOW` 1, `HIGH` 2. Die Suche ist der 0-Fee-Stern einer Stunde. Ein Long geht von einem Tief zu einem Hoch. Ein Short geht von einem Hoch zu einem Tief. Die Bewegung zählt nur, wenn sie über `SPREAD` liegt. Die markierten Kerzen wechseln die Seite. Die Marke der nächsten Kerze ist das Ziel. Der Trainingsverlust vergleicht die Logits direkt mit dieser Marke.
+Die Marke kommt aus `orion.models.arcus.labels.mark_hour`. Die Werte sind `NONE` 0, `LOW` 1, `HIGH` 2. Die Suche ist der 0-Fee-Stern einer Stunde. Ein Long geht von einem Tief zu einem Hoch. Ein Short geht von einem Hoch zu einem Tief. Die Bewegung zählt nur, wenn sie über `SPREAD` liegt. Bei gleichem Gewinn bleibt die frühere Kerze. Die markierten Kerzen wechseln die Seite. Die Marke der nächsten Kerze ist das Ziel. Der Trainingsverlust vergleicht die Logits direkt mit dieser Marke.
 
 Die Skizze ist der Logarithmus des Verhältnisses. Open, High, Low und Close der nächsten Kerze werden durch `ref` geteilt. Danach kommt der Logarithmus. Die vier Namen in `spec.SKETCH` sind `log_next_open`, `log_next_high`, `log_next_low`, `log_next_close`.
 
