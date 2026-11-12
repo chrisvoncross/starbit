@@ -57,10 +57,11 @@ def window_mean_std(natural: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray,
 
     finite = np.isfinite(natural) & np.asarray(valid, dtype=bool)[..., None]
     count = finite.sum(axis=-2).astype(np.float64)
-    filled = np.where(finite, natural, 0.0)
-    total = filled.sum(axis=-2)
+    work = np.where(finite, natural, 0.0)
+    total = work.sum(axis=-2)
+    np.square(work, out=work)
+    square = np.divide(work.sum(axis=-2), count, out=np.zeros_like(total), where=count > 0)
     mean = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
-    square = np.divide((filled * filled).sum(axis=-2), count, out=np.zeros_like(total), where=count > 0)
     std = np.sqrt(np.maximum(square - mean * mean, 0.0))
     used = np.where((count > 0) & (std > WINDOW_STD_FLOOR), std, 1.0)
     return finite, mean, used
@@ -108,27 +109,42 @@ def _natural(values: np.ndarray, scales: list[dict]) -> np.ndarray:
 
     raw = np.asarray(values, dtype=np.float64)
     out = np.array(raw, dtype=np.float64, copy=True)
+    _units(out, raw, scales)
+    return out
+
+
+def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
+    """Write log1p and mid into ``out``. The source columns stay in ``raw``."""
+
+    mid = None
+    mid_ok = None
     for index, scale in enumerate(scales):
         unit = scale.get("unit", "identity")
-        column = raw[..., index]
         if unit == "identity":
             continue
-        fresh = np.full(column.shape, np.nan, dtype=np.float64)
+        column = raw[..., index]
+        dest = out[..., index]
+        dest[:] = np.nan
         if unit == "log1p":
             ok = np.isfinite(column) & (column >= 0.0)
-            fresh[ok] = np.log1p(column[ok])
         elif unit == "touch":
             touch = raw[..., int(scale["touch"])]
             ok = np.isfinite(column) & np.isfinite(touch) & (touch > 0.0)
-            fresh[ok] = column[ok] - touch[ok]
+            if bool(np.any(ok)):
+                dest[ok] = column[ok] - touch[ok]
+            continue
         elif unit == "mid":
-            mid = (raw[..., int(scale["touch_bid"])] + raw[..., int(scale["touch_ask"])]) / 2.0
-            ok = np.isfinite(column) & np.isfinite(mid) & (mid > 0.0)
-            fresh[ok] = column[ok] - mid[ok]
+            if mid is None:
+                mid = (raw[..., int(scale["touch_bid"])] + raw[..., int(scale["touch_ask"])]) / 2.0
+                mid_ok = np.isfinite(mid) & (mid > 0.0)
+            ok = np.isfinite(column) & mid_ok
+            if bool(np.any(ok)):
+                dest[ok] = column[ok] - mid[ok]
+            continue
         else:
             continue
-        out[..., index] = fresh
-    return out
+        if bool(np.any(ok)):
+            dest[ok] = np.log1p(column[ok])
 
 
 def _finite_float(scaled: np.ndarray) -> np.ndarray:

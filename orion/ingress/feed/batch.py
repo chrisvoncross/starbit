@@ -74,19 +74,39 @@ def collate(rows: list[Row], seed: int) -> tuple[Batch, int]:
         order = rng.permutation(len(bucket))
         picked.extend(bucket[int(index)] for index in order)
     next_seed = int(rng.integers(0, 2**31 - 1))
-    label = np.empty(len(picked), dtype=object)
+    count = len(picked)
+    lookback, width = picked[0].features.shape
+    features = np.empty((count, lookback, width), dtype=np.float64)
+    valid = np.empty((count, lookback), dtype=bool)
+    open_ = np.empty(count, dtype=np.float64)
+    high = np.empty(count, dtype=np.float64)
+    low = np.empty(count, dtype=np.float64)
+    close = np.empty(count, dtype=np.float64)
+    ref = np.empty(count, dtype=np.float64)
+    symbol = np.empty(count, dtype=np.int64)
+    open_time_ms = np.empty(count, dtype=np.int64)
+    label = np.empty(count, dtype=object)
     for index, row in enumerate(picked):
+        features[index] = row.features
+        valid[index] = row.valid
+        open_[index] = row.open
+        high[index] = row.high
+        low[index] = row.low
+        close[index] = row.close
+        ref[index] = row.ref
+        symbol[index] = row.symbol
+        open_time_ms[index] = row.open_time_ms
         label[index] = row.label
     batch = Batch(
-        features=np.stack([row.features for row in picked]),
-        valid=np.stack([row.valid for row in picked]),
-        open=np.asarray([row.open for row in picked], dtype=np.float64),
-        high=np.asarray([row.high for row in picked], dtype=np.float64),
-        low=np.asarray([row.low for row in picked], dtype=np.float64),
-        close=np.asarray([row.close for row in picked], dtype=np.float64),
-        ref=np.asarray([row.ref for row in picked], dtype=np.float64),
-        symbol=np.asarray([row.symbol for row in picked], dtype=np.int64),
-        open_time_ms=np.asarray([row.open_time_ms for row in picked], dtype=np.int64),
+        features=features,
+        valid=valid,
+        open=open_,
+        high=high,
+        low=low,
+        close=close,
+        ref=ref,
+        symbol=symbol,
+        open_time_ms=open_time_ms,
         label=label,
     )
     return batch, next_seed

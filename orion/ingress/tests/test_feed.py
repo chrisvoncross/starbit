@@ -239,6 +239,36 @@ def test_resume_does_not_double_count_the_index_hour():
     resumed_stream.close()
 
 
+def test_a_wrapped_ring_snapshots_the_logical_window_and_restores_it():
+    from orion.ingress.feed.ring import Ring
+
+    ring = Ring(4, width=1)
+    for value in range(6):
+        ring.push(value * STEP, float(value), np.array([float(value)]))
+    snap = ring.snapshot()
+    assert snap.features.shape == (4, 1)
+    assert snap.features[:, 0].tolist() == [2.0, 3.0, 4.0, 5.0]
+    assert snap.valid.tolist() == [True, True, True, True]
+    fresh = Ring(4, width=1)
+    fresh.restore(snap)
+    viewed, valid = fresh.view()
+    assert viewed[:, 0].tolist() == [2.0, 3.0, 4.0, 5.0]
+    assert valid.tolist() == [True, True, True, True]
+    fresh.restart(99, 7.0, np.array([7.0]))
+    restarted, restarted_valid = fresh.view()
+    assert restarted[:, 0].tolist() == [0.0, 0.0, 0.0, 7.0]
+    assert restarted_valid.tolist() == [False, False, False, True]
+    fresh.push(99 + STEP, 8.0, np.array([8.0]))
+    fresh.cover(2, STEP)
+    covered, covered_valid = fresh.view()
+    assert covered[0, 0] == 7.0
+    assert covered[1, 0] == 8.0
+    assert np.isnan(covered[-2:, 0]).all()
+    assert covered_valid.tolist() == [True, True, True, True]
+    assert fresh.last_close is None
+    assert fresh.last_time == 99 + 3 * STEP
+
+
 def test_collate_keeps_hours_in_order_and_shuffles_inside_the_hour():
     from orion.ingress.feed.batch import Row, collate
 

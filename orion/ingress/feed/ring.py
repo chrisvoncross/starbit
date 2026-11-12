@@ -1,9 +1,10 @@
 """One symbol's ring of the last ``lookback`` candles.
 
-The ring survives ``release``. The hour arrays do not. The newest candle
-sits in the last slot. Empty padding sits in front until the ring is full.
-A missing bar is an empty slot in the sequence. Slots older than the
-lookback age out.
+The ring survives ``release``. The hour arrays do not. Slots sit in a
+circle. A new candle writes one row. ``view`` and ``snapshot`` return the
+logical window: the newest candle in the last slot, empty padding in
+front. A missing bar is an empty slot in the sequence. Slots older than
+the lookback age out.
 """
 
 from __future__ import annotations
@@ -14,7 +15,11 @@ from ..read.lanes import FEATURE_DIM
 
 
 class RingSnapshot:
-    """Ring, validity, last time, and last close at a resume point."""
+    """Ring, validity, last time, and last close at a resume point.
+
+    ``features`` and ``valid`` are the logical window. The newest candle
+    is in the last slot. There is no head index.
+    """
 
     __slots__ = ("features", "valid", "last_time", "last_close", "filled", "waiting")
 
@@ -59,18 +64,22 @@ class Ring:
         self.width = int(width)
         self.features = np.zeros((self.lookback, self.width), dtype=np.float64)
         self.valid = np.zeros(self.lookback, dtype=bool)
+        self.start = 0
         self.last_time: int | None = None
         self.last_close: float | None = None
         self.filled = 0
         self.waiting = False
 
     def view(self) -> tuple[np.ndarray, np.ndarray]:
-        """A copy of the slots as they are now, before the next candle."""
-        return self.features.copy(), self.valid.copy()
+        """A copy of the logical window, before the next candle."""
+        features = np.zeros((self.lookback, self.width), dtype=np.float64)
+        valid = np.zeros(self.lookback, dtype=bool)
+        self._read(features, valid)
+        return features, valid
 
     def push(self, time_ms: int, close: float, features: np.ndarray) -> None:
         """Append one candle that continues the current run."""
-        self._append(features, True)
+        self._append(features, True, 1)
         self.last_time = int(time_ms)
         self.last_close = float(close)
         self.waiting = True
@@ -87,34 +96,50 @@ class Ring:
         if count < 1 or self.last_time is None:
             return
         blank = np.full(self.width, np.nan, dtype=np.float64)
-        for _ in range(min(count, self.lookback)):
-            self._append(blank, True)
+        self._append(blank, True, min(count, self.lookback))
         self.last_time = int(self.last_time) + count * int(bar_ms)
         self.last_close = None
         self.waiting = True
 
-    def _append(self, features: np.ndarray, live: bool) -> None:
-        if self.filled < self.lookback:
-            if self.filled:
-                start = self.lookback - self.filled
-                self.features[start - 1 : self.lookback - 1] = self.features[start : self.lookback]
-                self.valid[start - 1 : self.lookback - 1] = self.valid[start : self.lookback]
-            self.features[-1] = features
-            self.valid[-1] = live
-            self.filled += 1
+    def _append(self, row: np.ndarray, live: bool, count: int) -> None:
+        count = int(count)
+        if count < 1:
             return
-        self.features[:-1] = self.features[1:]
-        self.valid[:-1] = self.valid[1:]
-        self.features[-1] = features
-        self.valid[-1] = live
+        if count >= self.lookback:
+            self.features[:] = row
+            self.valid[:] = live
+            self.start = 0
+            self.filled = self.lookback
+            return
+        overflow = self.filled + count - self.lookback
+        if overflow > 0:
+            self.start = (self.start + overflow) % self.lookback
+            self.filled -= overflow
+        dest = (self.start + self.filled) % self.lookback
+        first = min(count, self.lookback - dest)
+        self.features[dest : dest + first] = row
+        self.valid[dest : dest + first] = live
+        rest = count - first
+        if rest:
+            self.features[:rest] = row
+            self.valid[:rest] = live
+        self.filled += count
+
+    def _read(self, features: np.ndarray, valid: np.ndarray) -> None:
+        filled = self.filled
+        if filled < 1:
+            return
+        index = (self.start + np.arange(filled)) % self.lookback
+        features[-filled:] = self.features[index]
+        valid[-filled:] = self.valid[index]
 
     def restart(self, time_ms: int, close: float, features: np.ndarray) -> None:
         """Clear the ring and write the new candle in the last slot."""
         self.features.fill(0.0)
         self.valid.fill(False)
-        self.features[-1] = features
-        self.valid[-1] = True
-        self.filled = 1
+        self.start = 0
+        self.filled = 0
+        self._append(features, True, 1)
         self.last_time = int(time_ms)
         self.last_close = float(close)
         self.waiting = True
@@ -123,8 +148,7 @@ class Ring:
         return Seam(self.last_time, self.waiting)
 
     def snapshot(self) -> RingSnapshot:
-        features = np.array(self.features, copy=True)
-        valid = np.array(self.valid, copy=True)
+        features, valid = self.view()
         features.setflags(write=False)
         valid.setflags(write=False)
         close = None if self.last_close is None else float(self.last_close)
@@ -133,9 +157,14 @@ class Ring:
     def restore(self, snap: RingSnapshot) -> None:
         if snap.features.shape != self.features.shape or snap.valid.shape != self.valid.shape:
             raise ValueError("resume ring does not match this lookback")
-        self.features[:] = snap.features
-        self.valid[:] = snap.valid
+        filled = int(snap.filled)
+        self.features.fill(0.0)
+        self.valid.fill(False)
+        self.start = 0
+        self.filled = filled
+        if filled:
+            self.features[:filled] = snap.features[-filled:]
+            self.valid[:filled] = snap.valid[-filled:]
         self.last_time = None if snap.last_time is None else int(snap.last_time)
         self.last_close = None if snap.last_close is None else float(snap.last_close)
-        self.filled = int(snap.filled)
         self.waiting = bool(snap.waiting)

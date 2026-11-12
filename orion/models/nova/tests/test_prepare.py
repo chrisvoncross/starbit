@@ -79,6 +79,37 @@ def test_a_window_uses_its_own_mean_and_std_on_the_next_row():
     assert framed[0, 0] == np.float32(3.0)
 
 
+def test_the_window_scale_matches_the_population_formula():
+    names = ("bid_price_l0", "ask_price_l0", "volume", "column_3")
+    features = np.array(
+        [
+            [
+                [100.0, 102.0, 4.0, 1.0],
+                [np.nan, 102.0, -1.0, 3.0],
+                [110.0, 112.0, 0.0, np.nan],
+            ]
+        ],
+        dtype=np.float64,
+    )
+    valid = np.array([[True, False, True]])
+    stored, mean, used = present_windows(features, valid, names)
+    natural = natural_of(features, names)
+    finite = np.isfinite(natural) & valid[..., None]
+    count = finite.sum(axis=-2).astype(np.float64)
+    filled = np.where(finite, natural, 0.0)
+    total = filled.sum(axis=-2)
+    reference_mean = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
+    reference_square = np.divide((filled * filled).sum(axis=-2), count, out=np.zeros_like(total), where=count > 0)
+    reference_std = np.sqrt(np.maximum(reference_square - reference_mean * reference_mean, 0.0))
+    reference_used = np.where((count > 0) & (reference_std > 1e-6), reference_std, 1.0)
+    assert np.array_equal(mean, reference_mean)
+    assert np.array_equal(used, reference_used)
+    scaled = (natural - reference_mean[:, None, :]) / reference_used[:, None, :]
+    reference = np.zeros(natural.shape, dtype=np.float32)
+    reference[finite] = np.asarray(scaled[finite], dtype=np.float64).astype(np.float32)
+    assert np.array_equal(stored[..., :4], reference)
+
+
 def test_a_price_distance_is_scaled_by_the_window_not_a_tick():
     names = ("bid_price_l0", "ask_price_l0")
     features = np.array(

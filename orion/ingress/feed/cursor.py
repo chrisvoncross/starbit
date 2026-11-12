@@ -108,20 +108,6 @@ class Resume:
         self.skip = skip
 
 
-class _Event:
-    __slots__ = ("hour", "symbol", "time", "open", "high", "low", "close", "features")
-
-    def __init__(self, hour, symbol, time, open_, high, low, close, features) -> None:
-        self.hour = hour
-        self.symbol = symbol
-        self.time = time
-        self.open = open_
-        self.high = high
-        self.low = low
-        self.close = close
-        self.features = features
-
-
 def _relation(last_time: int | None, waiting: bool, time_ms: int) -> str:
     if last_time is None:
         return "start"
@@ -157,7 +143,7 @@ class _Walker:
         self.pos = 0
         self.done = False
         self.shadow = {symbol: [seam.last_time, seam.waiting] for symbol, seam in origin.items()}
-        self.events = _events(hour)
+        self.series, self.events = _events(hour)
 
     def next_row(self) -> Row | None:
         while self.pos < len(self.events):
@@ -177,30 +163,41 @@ class _Walker:
             raise FeedError("the hour ended before the resumed rows were skipped")
         return None
 
-    def _shadow(self, event: _Event) -> bool:
-        last, waiting = self.shadow.get(event.symbol, [None, False])
-        kind = _relation(last, waiting, event.time)
-        emits = kind == "next" or _missing_bars(last, waiting, event.time) is not None
-        self.shadow[event.symbol] = [event.time, True]
+    def _shadow(self, event) -> bool:
+        symbol = int(event["symbol"])
+        time = int(event["time"])
+        last, waiting = self.shadow.get(symbol, [None, False])
+        kind = _relation(last, waiting, time)
+        emits = kind == "next" or _missing_bars(last, waiting, time) is not None
+        self.shadow[symbol] = [time, True]
         return emits
 
-    def _apply(self, event: _Event) -> Row | None:
-        ring = self.rings.get(event.symbol)
+    def _apply(self, event) -> Row | None:
+        symbol = int(event["symbol"])
+        time = int(event["time"])
+        series = self.series[int(event["series"])]
+        index = int(event["row"])
+        candle = series.features[index]
+        open_ = float(series.open[index])
+        high = float(series.high[index])
+        low = float(series.low[index])
+        close = float(series.close[index])
+        ring = self.rings.get(symbol)
         if ring is None:
             ring = Ring(self.lookback)
-            self.rings[event.symbol] = ring
-        kind = _relation(ring.last_time, ring.waiting, event.time)
+            self.rings[symbol] = ring
+        kind = _relation(ring.last_time, ring.waiting, time)
         if kind == "gap":
-            missing = _missing_bars(ring.last_time, ring.waiting, event.time)
+            missing = _missing_bars(ring.last_time, ring.waiting, time)
             if missing is not None:
-                self.gaps.append(Gap(event.symbol, ring.last_time, event.time, "candle"))
+                self.gaps.append(Gap(symbol, ring.last_time, time, "candle"))
                 self.log.write(
                     "gap",
                     token=self.token,
-                    symbol=int(event.symbol),
+                    symbol=symbol,
                     reason="candle",
                     earlier_ms=ring.last_time,
-                    later_ms=int(event.time),
+                    later_ms=time,
                 )
                 ring.cover(missing, CANDLE_MS)
                 kind = "next"
@@ -210,56 +207,61 @@ class _Walker:
             if self.mark is not None:
                 label = self.mark(
                     Candle(
-                        symbol=event.symbol,
-                        open_time_ms=event.time,
-                        open=event.open,
-                        high=event.high,
-                        low=event.low,
-                        close=event.close,
-                        features=event.features,
+                        symbol=symbol,
+                        open_time_ms=time,
+                        open=open_,
+                        high=high,
+                        low=low,
+                        close=close,
+                        features=candle,
                     )
                 )
             ref = float(ring.last_close) if ring.last_close is not None else float("nan")
-            ring.push(event.time, event.close, event.features)
+            ring.push(time, close, candle)
             return Row(
-                hour=event.hour,
-                symbol=event.symbol,
-                open_time_ms=event.time,
+                hour=int(event["hour"]),
+                symbol=symbol,
+                open_time_ms=time,
                 features=features,
                 valid=valid,
-                open=event.open,
-                high=event.high,
-                low=event.low,
-                close=event.close,
+                open=open_,
+                high=high,
+                low=low,
+                close=close,
                 ref=ref,
                 label=label,
             )
         if kind == "start":
-            ring.push(event.time, event.close, event.features)
+            ring.push(time, close, candle)
         else:
-            ring.restart(event.time, event.close, event.features)
+            ring.restart(time, close, candle)
         return None
 
 
-def _events(hour) -> list[_Event]:
-    events: list[_Event] = []
-    for series in hour.series:
-        count = len(series)
-        for index in range(count):
-            events.append(
-                _Event(
-                    hour.index,
-                    int(series.symbol),
-                    int(series.open_time_ms[index]),
-                    float(series.open[index]),
-                    float(series.high[index]),
-                    float(series.low[index]),
-                    float(series.close[index]),
-                    np.array(series.features[index], dtype=np.float64, copy=True),
-                )
-            )
-    events.sort(key=lambda event: (event.time, event.symbol))
-    return events
+def _events(hour) -> tuple[list, np.ndarray]:
+    """Indexes into the hour, ordered by time then symbol. No feature copy."""
+
+    series = list(hour.series)
+    total = sum(len(item) for item in series)
+    records = np.empty(
+        total,
+        dtype=[("time", "i8"), ("symbol", "i8"), ("series", "i4"), ("row", "i4"), ("hour", "i8")],
+    )
+    cursor = 0
+    hour_index = int(hour.index)
+    for series_index, item in enumerate(series):
+        count = len(item)
+        if count == 0:
+            continue
+        slot = records[cursor : cursor + count]
+        slot["time"] = item.open_time_ms
+        slot["symbol"] = int(item.symbol)
+        slot["series"] = series_index
+        slot["row"] = np.arange(count, dtype=np.int32)
+        slot["hour"] = hour_index
+        cursor += count
+    records.sort(order=["time", "symbol"], kind="stable")
+    return series, records
 
 
 class Feed:
