@@ -1,13 +1,11 @@
-# NOVA
+# Nova
 
-See the turn before the candle closes.
+Nova liest die geschlossene Kerze. Das Ziel ist die nächste Kerze.
 
-Predictive intelligence. One candle ahead.
+Die Bauart steht in `ARCHITECTURE.md`.
 
-NOVA erkennt die Entstehung einer Marktbewegung, bevor sie sich vollständig auf dem Chart zeigt. Das Modell liest Marktstruktur, Bewegungsdynamik und die kurzen Signale und benennt mögliche lokale Hoch- und Tiefpunkte eine Kerze, bevor sie ausgebildet sind. Es wartet nicht, bis die Umkehr sichtbar ist. Es versucht, ihre Entstehung vorauszusehen.
+`spec.py` bindet die 216 Spalten aus `orion.ingress.read.lanes.FEATURE_COLUMNS`. `prepare.py` legt je Spalte den gespeicherten Wert und ein Fehlbit ab. Gespeichert wird float32. `scale.py` setzt die Skala. Leiterpreise, `vwap` und `microprice` sind der Abstand zur Mitte derselben Zeile, geteilt durch den Tick aus Hoch, Tief und Schluss. `TICK` 0.1 ist dieser Tick nicht. Mengen und Zählungen gehen durch `log1p`, dann durch Median und `1.4826` MAD. Weniger als zwei verschiedene endliche Werte auf einer Spalte, die nicht `kind` `book` ist, werden als 0 gespeichert. Die Skizze nutzt `orion.models.arcus.norm.fit_scale`.
 
-NOVA ist das Vorhersagemodell von Ghostbyte. Es prognostiziert eine mögliche künftige Marktstruktur. Es garantiert keine Wendepunkte. Ob daraus eine Maker-Order wird, hängt zusätzlich am Orderbuch, an der Fill-Wahrscheinlichkeit und an der Latenz. Das Modell legt keine Order und füllt keine.
+`state.py` setzt drei Köpfe: `book`, `trade`, `other`. Das sind nicht 216 Spalten. Vor einem Konstantenfilter hat `book` 88 Namen, `trade` fünf und `other` sieben. `net.py` hängt diese Köpfe an denselben letzten Zustand wie den Stern und die Skizze.
 
-## Der Name
-
-Eine Nova ist ein plötzlicher Ausbruch aus einem Zustand, der vorher unscheinbar war. NOVA sucht den Moment, an dem eine Bewegung ihre Richtung ändern kann. Die Vorhersage liegt eine Kerze vor dem möglichen lokalen Extrempunkt, damit eine Maker-Order vor der bestätigten Umkehr liegen kann, statt erst auf sie zu reagieren.
+`train.py` übt Symbol 130. `wide.py` übt jedes Symbol mit Zeilen. Beide Läufe lesen die Lerntage und die Select-Tage aus `spec.py`. `exam_opened` bleibt false. `wide.py` liest die Lernstunden einmal für die Entscheidungen und dann sechsmal. Eine Runde hält die Symbole einer Gruppe `symbol % 6`. Der erste Trainingsschritt kommt danach.
