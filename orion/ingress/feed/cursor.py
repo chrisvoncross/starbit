@@ -8,11 +8,12 @@ candle. ``mark`` runs only while the hour is in memory. This
 package does not know the star rule.
 
 The last candle of an hour waits for the first candle of the next hour
-only when that candle is exactly one step later. A holdout, a hole, an
-empty hour, and a missing 15s candle drop the waiting row. The candle
-after the gap is not the target. The ring slots that cross the gap become
-invalid and the ring refills from the front. The gap is noted. No candle
-is invented. A symbol with no row in this hour drops a waiting row as
+only when that candle is exactly one step later. A holdout, a hole, and
+an empty hour drop the waiting row. A missing 15s candle stays in the
+sequence as an empty slot. Candles before it that still fit in the
+lookback stay. The stored candle after the hole is the next row. That
+row has no previous close. The gap is noted. No candle is invented. A
+symbol with no row in this hour drops a waiting row as
 ``absent``. A symbol the tick rule is hiding at the start of this hour
 drops it as ``tick``, including one this hour's prices release for the
 next hour. Either way the ring stays and the symbol emits nothing.
@@ -129,6 +130,17 @@ def _relation(last_time: int | None, waiting: bool, time_ms: int) -> str:
     return "gap"
 
 
+def _missing_bars(last_time: int | None, waiting: bool, time_ms: int) -> int | None:
+    """How many unobserved bars sit between two stored candles, or none."""
+
+    if not waiting or last_time is None:
+        return None
+    span = int(time_ms) - int(last_time)
+    if span <= CANDLE_MS or span % CANDLE_MS != 0:
+        return None
+    return span // CANDLE_MS - 1
+
+
 class _Walker:
     """Candles of one hour, in time order then symbol order."""
 
@@ -168,8 +180,9 @@ class _Walker:
     def _shadow(self, event: _Event) -> bool:
         last, waiting = self.shadow.get(event.symbol, [None, False])
         kind = _relation(last, waiting, event.time)
+        emits = kind == "next" or _missing_bars(last, waiting, event.time) is not None
         self.shadow[event.symbol] = [event.time, True]
-        return kind == "next"
+        return emits
 
     def _apply(self, event: _Event) -> Row | None:
         ring = self.rings.get(event.symbol)
@@ -177,6 +190,20 @@ class _Walker:
             ring = Ring(self.lookback)
             self.rings[event.symbol] = ring
         kind = _relation(ring.last_time, ring.waiting, event.time)
+        if kind == "gap":
+            missing = _missing_bars(ring.last_time, ring.waiting, event.time)
+            if missing is not None:
+                self.gaps.append(Gap(event.symbol, ring.last_time, event.time, "candle"))
+                self.log.write(
+                    "gap",
+                    token=self.token,
+                    symbol=int(event.symbol),
+                    reason="candle",
+                    earlier_ms=ring.last_time,
+                    later_ms=int(event.time),
+                )
+                ring.cover(missing, CANDLE_MS)
+                kind = "next"
         if kind == "next":
             features, valid = ring.view()
             label = None
@@ -206,16 +233,6 @@ class _Walker:
                 close=event.close,
                 ref=ref,
                 label=label,
-            )
-        if kind == "gap" and ring.waiting:
-            self.gaps.append(Gap(event.symbol, ring.last_time, event.time, "candle"))
-            self.log.write(
-                "gap",
-                token=self.token,
-                symbol=int(event.symbol),
-                reason="candle",
-                earlier_ms=ring.last_time,
-                later_ms=int(event.time),
             )
         if kind == "start":
             ring.push(event.time, event.close, event.features)

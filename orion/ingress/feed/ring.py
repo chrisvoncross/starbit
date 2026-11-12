@@ -1,7 +1,9 @@
 """One symbol's ring of the last ``lookback`` candles.
 
-The ring survives ``release``. The hour arrays do not. A gap invalidates
-the slots that cross it and the next candle is written at the front.
+The ring survives ``release``. The hour arrays do not. The newest candle
+sits in the last slot. Empty padding sits in front until the ring is full.
+A missing bar is an empty slot in the sequence. Slots older than the
+lookback age out.
 """
 
 from __future__ import annotations
@@ -68,25 +70,50 @@ class Ring:
 
     def push(self, time_ms: int, close: float, features: np.ndarray) -> None:
         """Append one candle that continues the current run."""
-        if self.filled < self.lookback:
-            self.features[self.filled] = features
-            self.valid[self.filled] = True
-            self.filled += 1
-        else:
-            self.features[:-1] = self.features[1:]
-            self.valid[:-1] = self.valid[1:]
-            self.features[-1] = features
-            self.valid[-1] = True
+        self._append(features, True)
         self.last_time = int(time_ms)
         self.last_close = float(close)
         self.waiting = True
 
+    def cover(self, missing: int, bar_ms: int) -> None:
+        """Insert ``missing`` unobserved bars. History that still fits stays.
+
+        The slot is a position in the sequence and carries no value. A hole
+        longer than the lookback leaves only empty slots. The clock jumps
+        the whole hole, so the next stored candle is one bar later.
+        """
+
+        count = int(missing)
+        if count < 1 or self.last_time is None:
+            return
+        blank = np.full(self.width, np.nan, dtype=np.float64)
+        for _ in range(min(count, self.lookback)):
+            self._append(blank, True)
+        self.last_time = int(self.last_time) + count * int(bar_ms)
+        self.last_close = None
+        self.waiting = True
+
+    def _append(self, features: np.ndarray, live: bool) -> None:
+        if self.filled < self.lookback:
+            if self.filled:
+                start = self.lookback - self.filled
+                self.features[start - 1 : self.lookback - 1] = self.features[start : self.lookback]
+                self.valid[start - 1 : self.lookback - 1] = self.valid[start : self.lookback]
+            self.features[-1] = features
+            self.valid[-1] = live
+            self.filled += 1
+            return
+        self.features[:-1] = self.features[1:]
+        self.valid[:-1] = self.valid[1:]
+        self.features[-1] = features
+        self.valid[-1] = live
+
     def restart(self, time_ms: int, close: float, features: np.ndarray) -> None:
-        """Invalidate every slot that crossed the gap and write at the front."""
+        """Clear the ring and write the new candle in the last slot."""
         self.features.fill(0.0)
         self.valid.fill(False)
-        self.features[0] = features
-        self.valid[0] = True
+        self.features[-1] = features
+        self.valid[-1] = True
         self.filled = 1
         self.last_time = int(time_ms)
         self.last_close = float(close)

@@ -55,7 +55,7 @@ def _resume(hours, tables, state, *, lookback, batch, mark=None, holdout=()):
     return stream, feed, seen
 
 
-def test_a_missing_15s_candle_drops_the_waiting_row_and_is_noted():
+def test_a_missing_15s_candle_stays_in_the_window_and_is_noted():
     rows = [
         flat(2, 0, BASE),
         flat(2, STEP, BASE + 100),
@@ -67,17 +67,44 @@ def test_a_missing_15s_candle_drops_the_waiting_row_and_is_noted():
     _stream.close()
     assert len(batches) == 1
     batch = batches[0]
-    assert sorted(batch.open_time_ms.tolist()) == [STEP, 4 * STEP]
+    assert sorted(batch.open_time_ms.tolist()) == [STEP, 3 * STEP, 4 * STEP]
     by_time = {int(batch.open_time_ms[index]): float(batch.close[index]) for index in range(len(batch))}
     assert by_time[STEP] == (BASE + 100) / 1e8
+    assert by_time[3 * STEP] == (BASE + 200) / 1e8
     assert by_time[4 * STEP] == (BASE + 300) / 1e8
     noted = [gap for gap in feed.gaps if gap.reason == "candle" and gap.symbol == 2]
     assert len(noted) == 1
     assert noted[0].earlier_ms == STEP
     assert noted[0].later_ms == 3 * STEP
+    hole = int(np.flatnonzero(batch.open_time_ms == 3 * STEP)[0])
+    assert batch.valid[hole].tolist() == [False, True, True, True]
+    assert batch.features[hole, 1, 0] == 0
+    assert batch.features[hole, 2, 0] == STEP
+    assert np.isnan(batch.features[hole, 3]).all()
+    assert np.isnan(batch.ref[hole])
     later = int(np.flatnonzero(batch.open_time_ms == 4 * STEP)[0])
-    assert batch.valid[later].tolist() == [True, False, False, False]
-    assert batch.features[later, 0, 0] == 3 * STEP
+    assert batch.valid[later].tolist() == [True, True, True, True]
+    assert batch.features[later, 0, 0] == 0
+    assert batch.features[later, 1, 0] == STEP
+    assert np.isnan(batch.features[later, 2]).all()
+    assert batch.features[later, 3, 0] == 3 * STEP
+
+
+def test_a_gap_longer_than_the_lookback_ages_the_old_candles_out():
+    rows = [
+        flat(2, 0, BASE),
+        flat(2, STEP, BASE + 100),
+        flat(2, 5 * STEP, BASE + 200),
+        flat(2, 6 * STEP, BASE + 300),
+    ]
+    _stream, feed, _seen = _feed(("h0",), {"h0": table(rows, lane0="time")}, lookback=2, batch=8)
+    batch = _batches(feed)[0]
+    _stream.close()
+    assert sorted(batch.open_time_ms.tolist()) == [STEP, 5 * STEP, 6 * STEP]
+    aged = int(np.flatnonzero(batch.open_time_ms == 6 * STEP)[0])
+    assert batch.valid[aged].tolist() == [True, True]
+    assert np.isnan(batch.features[aged, 0]).all()
+    assert batch.features[aged, 1, 0] == 5 * STEP
 
 
 def test_a_hole_an_empty_hour_and_a_holdout_drop_the_waiting_row():
@@ -100,8 +127,8 @@ def test_a_hole_an_empty_hour_and_a_holdout_drop_the_waiting_row():
         _stream.close()
         assert sorted(batch.open_time_ms.tolist()) == [STEP, 2 * STEP, 3 * STEP, 4 * STEP, 6 * STEP], reason
         row = int(np.flatnonzero(batch.open_time_ms == 6 * STEP)[0])
-        assert batch.features[row, 0, 0] == 5 * STEP
-        assert bool(batch.valid[row, 0]) and not bool(batch.valid[row, 1])
+        assert batch.features[row, -1, 0] == 5 * STEP
+        assert bool(batch.valid[row, -1]) and not bool(batch.valid[row, 0])
         if reason == "holdout":
             assert token not in seen
         if reason == "hole":
@@ -117,11 +144,14 @@ def test_batches_keep_hour_order_and_a_short_tail_is_only_at_the_end():
     _stream, feed, seen = _feed(("h0", "h1"), tables, lookback=4, batch=4, seed=7)
     batches = _batches(feed)
     _stream.close()
-    assert [len(batch) for batch in batches] == [4, 2]
+    assert [len(batch) for batch in batches] == [4, 3]
     assert seen == ["h0", "h1"]
     stamps = [int(stamp) for batch in batches for stamp in batch.open_time_ms]
     assert any(stamp < HOUR for stamp in stamps)
     assert any(stamp >= HOUR for stamp in stamps)
+    opened = int(np.flatnonzero(batches[0].open_time_ms == HOUR)[0])
+    assert np.isnan(batches[0].features[opened]).all()
+    assert batches[0].valid[opened].tolist() == [True, True, True, True]
     row = int(np.flatnonzero(batches[0].open_time_ms == STEP)[0])
     assert batches[0].ref[row] == BASE / 1e8
     assert batches[0].close[row] == (BASE + 10_000) / 1e8
@@ -138,7 +168,7 @@ def test_resume_skips_rows_already_taken_and_does_not_advance_the_ring():
     assert state.taken == 1
     assert state.rings[2].last_time == 2 * STEP
     assert int(state.rings[2].filled) == 3
-    assert state.rings[2].valid.tolist() == [True, True, True, False]
+    assert state.rings[2].valid.tolist() == [False, True, True, True]
     rest = _batches(feed)
     _stream.close()
     _stream2, resumed, seen = _resume(("h0",), tables, state, lookback=4, batch=2, mark=lambda candle: candle.close)
