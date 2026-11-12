@@ -55,11 +55,6 @@ def _run(bar_ms: int, deals: dict[str, np.ndarray], book: dict[str, np.ndarray])
     cut = int(n * HOLD)
     if cut < LOOKBACK or n - cut < 2:
         raise RuntimeError(f"{bar_ms} ms is too short: {n} bars")
-    scales = nova_train.fit_feature_scales(
-        raw["features"][:cut],
-        prices=np.stack((raw["high"][:cut], raw["low"][:cut], raw["close"][:cut]), axis=1),
-    )
-    nova_train.apply_feature_scales(raw, scales)
     nova_train.BAR_MS = bar_ms
     packed = nova_train.windows(raw)
     boundary = int(raw["time"][cut])

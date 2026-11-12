@@ -160,9 +160,7 @@ def test_the_lane_log_names_the_kept_and_the_dropped():
     assert "bid_vol_l0" in layout_row["book_lanes"]
     assert "volume" not in layout_row["trade_lanes"]
     assert "trade_count" in layout_row["trade_lanes"]
-    dropped = {row["lane"]: row["group"] for row in rows if row["kind"] == "drop"}
-    assert dropped["spread_bps"] == "book"
-    assert dropped["volume"] == "trade"
+    assert [row["kind"] for row in rows] == ["layout"]
 
 
 def test_the_heads_read_one_vector():

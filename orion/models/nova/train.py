@@ -12,8 +12,8 @@ import torch.nn.functional as F
 from orion.models.arcus.decode import constrain
 from orion.models.arcus.labels import alternation, mark_hour
 from orion.models.arcus.norm import apply_scale, fit_scale
-from orion.models.nova.scale import fit_columns
-from orion.models.nova.prepare import model_inputs, present_lanes
+from orion.models.nova.scale import natural_of
+from orion.models.nova.prepare import frame_from_stats, model_inputs, present_windows
 from orion.models.nova.state import GROUPS, StateLayout, state_layout, state_loss, state_report
 from orion.models.arcus.report import metrics as _metrics
 from orion.models.arcus.report import strip as _strip
@@ -22,6 +22,7 @@ from orion.models.ledger.checkpoint import save_checkpoint
 from orion.models.ledger.log import write_event
 from orion.models.ledger.manifest import fingerprint, write_manifest
 from orion.models.door import Log, dotenv, symbol_hours
+from orion.models.nova.log import Tally, event_fields, line
 from orion.models.nova.net import Nova
 from orion.models.nova.spec import BAR_MS, HIGH, INPUTS, LEARN_DAYS, LOOKBACK, LOW, NONE, SELECT_DAYS, SPREAD, TICK
 
@@ -48,20 +49,14 @@ def main() -> None:
         "inputs": list(INPUTS),
         "keep": "lowest select state error, the mean of the book, trade, and other heads",
         "epochs": EPOCHS,
+        "scale": "mean and standard deviation of the lookback",
+        "lookback": LOOKBACK,
     }
     delivery = Log(run_dir / "ingress.jsonl")
     learn_series = read_symbol(LEARN_DAYS, "learn", BTC, log=delivery)
     select_series = read_symbol(SELECT_DAYS, "select", BTC, log=delivery)
-    scales = fit_feature_scales(
-        learn_series["features"],
-        prices=np.stack(
-            (learn_series["high"], learn_series["low"], learn_series["close"]),
-            axis=1,
-        ),
-    )
-    apply_feature_scales(learn_series, scales)
-    apply_feature_scales(select_series, scales)
-    layout = state_layout(INPUTS, scales)
+    scales = {"kind": "window", "lookback": LOOKBACK}
+    layout = state_layout(INPUTS)
     payload["state_lanes"] = {name: int(layout.columns[name].size) for name in GROUPS}
     write_manifest(run_dir / "manifest.json", payload)
     print(f"manifest {fingerprint(payload)}", flush=True)
@@ -95,11 +90,20 @@ def main() -> None:
         part_total = {name: 0.0 for name in GROUPS}
         part_seen = {name: 0 for name in GROUPS}
         seen = 0
+        tally = Tally()
         for start in range(0, order.size, BATCH):
             take = order[start : start + BATCH]
             batch = {key: value[take] for key, value in packed.items()}
             opt.zero_grad(set_to_none=True)
             logits, sketch, state_hat, aux = model(batch["features"], batch["valid"])
+            truth = batch["mark"].detach().cpu().numpy()
+            target = batch["sketch"].detach().cpu().numpy()
+            tally.add(
+                truth,
+                logits.detach().argmax(dim=-1).cpu().numpy(),
+                np.isfinite(target).all(axis=1),
+                np.abs(sketch.detach().cpu().numpy() - target),
+            )
             price = (
                 F.cross_entropy(logits, batch["mark"], weight=weights)
                 + F.smooth_l1_loss(sketch, batch["sketch"])
@@ -122,10 +126,11 @@ def main() -> None:
         measured = score(model, select, sketch_scales, device, layout)
         select_state = measured["select_state"]
         kept = select_state is not None and (best is None or select_state < best)
+        kpi = tally.fields()
         print(
             f"epoch {epoch} loss {total / max(seen, 1):.4f} "
             f"price {price_total / max(seen, 1):.4f} {_parts(part_total, part_seen)} "
-            f"state {state_total / max(seen, 1):.4f} "
+            f"state {state_total / max(seen, 1):.4f} {line(kpi)} "
             f"precision {measured['precision']:.4f} recall {measured['recall']:.4f} "
             f"f1 {measured['f1']:.4f} high_ticks {measured['high_ticks']:.2f} "
             f"low_ticks {measured['low_ticks']:.2f} calls {measured['calls']} "
@@ -142,6 +147,7 @@ def main() -> None:
             price=price_total / max(seen, 1),
             **_part_fields(part_total, part_seen),
             state=state_total / max(seen, 1),
+            **event_fields(kpi),
             **measured,
             kept=kept,
         )
@@ -178,20 +184,11 @@ def read_symbol(days: tuple[str, ...], split: str, symbol: int, log: Log | None 
     return {key: np.concatenate(chunks) for key, chunks in pieces.items()}
 
 
-def fit_feature_scales(features: np.ndarray, prices: np.ndarray | None = None) -> list[dict]:
-    """One scale per lane. The rows are one symbol. ``prices`` are the bar high, low, and close."""
-
-    return fit_columns(features, prices=prices)
-
-
-def apply_feature_scales(raw: dict[str, np.ndarray], scales: list[dict]) -> None:
-    """Scale every lane and keep an empty lane as a center plus a missing bit."""
-
-    raw["features"] = present_lanes(raw["features"], scales)
-
-
 def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> dict[str, np.ndarray]:
-    """One row per close whose next candle is the next bar. Inputs are already sealed."""
+    """One row per close whose next candle is the next bar.
+
+    Raw lanes are divided by the mean and standard deviation of that row's lookback.
+    """
 
     time = raw["time"]
     follows = np.zeros(time.shape[0], dtype=np.bool_)
@@ -212,9 +209,6 @@ def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> di
     ok = np.isfinite(sketch).all(axis=1) & (ref > 0)
     index = index[ok]
     nxt = nxt[ok]
-    width = raw["features"].shape[1]
-    feats = np.zeros((index.shape[0], LOOKBACK, width), dtype=np.float32)
-    valid = np.zeros((index.shape[0], LOOKBACK), dtype=np.bool_)
     values = raw["features"]
     back = np.arange(LOOKBACK - 1, -1, -1)
     long_enough = index >= LOOKBACK - 1
@@ -222,18 +216,7 @@ def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> di
     if np.any(long_enough):
         picked = index[long_enough]
         full[long_enough] = time[picked] - time[picked - (LOOKBACK - 1)] == (LOOKBACK - 1) * BAR_MS
-    if np.any(full):
-        grid = index[full, None] - back
-        feats[full] = values[grid]
-        valid[full] = True
-    for row in np.flatnonzero(~full):
-        candle = int(index[row])
-        start = candle
-        while start > 0 and time[start] == time[start - 1] + BAR_MS and candle - start < LOOKBACK - 1:
-            start -= 1
-        count = candle - start + 1
-        feats[row, -count:] = values[start : candle + 1]
-        valid[row, -count:] = True
+    feats, valid, mean, used = _scale_windows(values, time, index, full, back)
     rows = {
         "features": feats,
         "valid": valid,
@@ -248,15 +231,63 @@ def windows(raw: dict[str, np.ndarray], layout: StateLayout | None = None) -> di
         "next_low": raw["low"][nxt].astype(np.float64),
         "next_close": raw["close"][nxt].astype(np.float64),
     }
-    if layout is not None:
-        if width != model_inputs(len(INPUTS)):
-            raise RuntimeError(f"state layout needs {model_inputs(len(INPUTS))} lanes, got {width}")
-        lanes = width // 2
-        nxt_feat = values[nxt]
-        flat = layout.flat()
-        rows["state"] = nxt_feat[:, flat].astype(np.float32)
-        rows["state_present"] = (1.0 - nxt_feat[:, lanes + flat]).astype(np.float32)
+    if layout is None:
+        return rows
+    lanes = int(values.shape[1])
+    if lanes != len(INPUTS):
+        raise RuntimeError(f"state layout needs {len(INPUTS)} raw lanes, got {lanes}")
+    natural = natural_of(values[nxt], INPUTS)
+    prepared = frame_from_stats(natural, mean, used)
+    flat = layout.flat()
+    rows["state"] = prepared[:, flat].astype(np.float32)
+    rows["state_present"] = (1.0 - prepared[:, lanes + flat]).astype(np.float32)
     return rows
+
+
+def _scale_windows(
+    values: np.ndarray,
+    time: np.ndarray,
+    index: np.ndarray,
+    full: np.ndarray,
+    back: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    lanes = int(values.shape[1])
+    count = int(index.shape[0])
+    feats = np.zeros((count, LOOKBACK, model_inputs(lanes)), dtype=np.float32)
+    valid = np.zeros((count, LOOKBACK), dtype=np.bool_)
+    mean = np.zeros((count, lanes), dtype=np.float64)
+    used = np.ones((count, lanes), dtype=np.float64)
+    chunk = 2048
+    for start in range(0, count, chunk):
+        stop = min(count, start + chunk)
+        raw = np.zeros((stop - start, LOOKBACK, lanes), dtype=np.float64)
+        live = valid[start:stop]
+        _place(raw, live, values, time, index[start:stop], full[start:stop], back)
+        scaled, mean[start:stop], used[start:stop] = present_windows(raw, live)
+        feats[start:stop] = scaled
+    return feats, valid, mean, used
+
+
+def _place(dest: np.ndarray, valid: np.ndarray, values: np.ndarray, time: np.ndarray, index: np.ndarray, full: np.ndarray, back: np.ndarray) -> None:
+    if np.any(full):
+        dest[full] = values[index[full, None] - back]
+        valid[full] = True
+    missing = np.flatnonzero(~full)
+    if missing.size == 0:
+        return
+    origin = int(time[0])
+    lookup = {int(stamp): pos for pos, stamp in enumerate(time.tolist())}
+    for row in missing:
+        end = int(time[int(index[row])])
+        for slot in range(LOOKBACK):
+            stamp = end - (LOOKBACK - 1 - slot) * BAR_MS
+            pos = lookup.get(stamp)
+            if pos is not None:
+                dest[row, slot] = values[pos]
+                valid[row, slot] = True
+            elif stamp >= origin:
+                dest[row, slot] = np.nan
+                valid[row, slot] = True
 
 
 def fit_sketch(sketch: np.ndarray) -> list[dict]:
@@ -406,11 +437,10 @@ def _forward(model: Nova, rows: dict, device: torch.device) -> tuple[np.ndarray,
     return np.concatenate(logits_out), np.concatenate(sketch_out), np.concatenate(state_out)
 
 
-def log_state_lanes(events: Path, stamp: str, scales: list[dict] | dict, layout: StateLayout) -> None:
-    """Kept lanes and the columns that are one value for every symbol."""
+def log_state_lanes(events: Path, stamp: str, scales: dict | None, layout: StateLayout) -> None:
+    """Kept lanes. ``scales`` is the window marker and is not a per-lane fit."""
 
-    from orion.models.nova.state import group_of
-
+    del scales
     kept = {name: [INPUTS[int(index)] for index in layout.columns[name]] for name in GROUPS}
     write_event(
         events,
@@ -420,39 +450,6 @@ def log_state_lanes(events: Path, stamp: str, scales: list[dict] | dict, layout:
         **{name: len(lanes) for name, lanes in kept.items()},
         **{f"{name}_lanes": lanes for name, lanes in kept.items()},
     )
-    if isinstance(scales, dict):
-        sheets = list(scales.values())
-        for index, name in enumerate(INPUTS):
-            group = group_of(name)
-            if group is None or not all(sheet[index]["passthrough"] for sheet in sheets):
-                continue
-            write_event(
-                events,
-                run=stamp,
-                side="path",
-                kind="drop",
-                lane=name,
-                group=group,
-                symbols=len(sheets),
-                rows=int(sum(sheet[index]["rows"] for sheet in sheets)),
-            )
-        return
-    for index, name in enumerate(INPUTS):
-        group = group_of(name)
-        if group is None or not scales[index]["passthrough"]:
-            continue
-        scale = scales[index]
-        write_event(
-            events,
-            run=stamp,
-            side="path",
-            kind="drop",
-            lane=name,
-            group=group,
-            rows=int(scale["rows"]),
-            location=float(scale["location"]),
-            scale=float(scale["scale"]),
-        )
 
 
 def _parts(total: dict[str, float], seen: dict[str, int]) -> str:

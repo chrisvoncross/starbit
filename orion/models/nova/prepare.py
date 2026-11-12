@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from orion.models.nova.scale import _natural, stored_values
+from orion.models.nova.scale import _names, _natural, apply_window, column_units, window_mean_std
 
 
 def model_inputs(lanes: int) -> int:
@@ -18,29 +18,33 @@ def model_inputs(lanes: int) -> int:
     return int(lanes) * 2
 
 
-def present_lanes(features: np.ndarray, scales: list[dict]) -> np.ndarray:
-    """Return scaled values and a missing bit for each lane.
+def present_windows(
+    features: np.ndarray,
+    valid: np.ndarray,
+    names: tuple[str, ...] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Scale each lookback by its own mean and standard deviation.
 
-    The last axis doubles. A finite lane is scaled. An empty lane is zero in
-    that unit. A legacy scale without a kind keeps its stored location. The
-    bit is 1 when the lane was empty.
+    ``features`` is ``(batch, time, lanes)`` of raw lanes. ``valid`` is
+    ``(batch, time)``. The return is the model input, the mean, and the
+    divisor, both ``(batch, lanes)``.
     """
 
     values = np.asarray(features, dtype=np.float64)
-    if values.shape[-1] != len(scales):
-        raise ValueError(f"{values.shape[-1]} lanes and {len(scales)} scales")
-    natural = _natural(values, scales)
-    finite = np.isfinite(natural)
-    scaled = np.zeros(values.shape, dtype=np.float32)
-    for index, scale in enumerate(scales):
-        column = natural[..., index]
-        ok = finite[..., index]
-        if bool(ok.any()):
-            scaled[..., index][ok] = stored_values(column[ok], scale)
-        missing = ~ok
-        if bool(missing.any()):
-            legacy = scale.get("kind") is None and scale["passthrough"]
-            center = np.float32(scale["location"] if legacy else 0.0)
-            scaled[..., index][missing] = center
-    bits = (~finite).astype(np.float32)
-    return np.concatenate([scaled, bits], axis=-1)
+    if values.ndim != 3:
+        raise ValueError(f"windows are (batch, time, lanes), got {values.shape}")
+    chosen = _names(names, values.shape[-1])
+    natural = _natural(values, column_units(chosen))
+    finite, mean, used = window_mean_std(natural, valid)
+    stored = apply_window(natural, mean[:, None, :], used[:, None, :], finite)
+    live = np.asarray(valid, dtype=bool)[..., None]
+    bits = (~(np.isfinite(natural) & live)).astype(np.float32)
+    return np.concatenate([stored, bits], axis=-1), mean, used
+
+
+def frame_from_stats(natural: np.ndarray, mean: np.ndarray, used: np.ndarray) -> np.ndarray:
+    """One row per window, in the same units as ``present_windows``."""
+
+    stored = apply_window(natural, mean, used)
+    bits = (~np.isfinite(natural)).astype(np.float32)
+    return np.concatenate([stored, bits], axis=-1)

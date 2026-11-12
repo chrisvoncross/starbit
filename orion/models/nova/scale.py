@@ -1,10 +1,9 @@
-"""One scale per name.
+"""Window scale.
 
-Every ladder price, ``vwap``, and ``microprice`` is the distance from the
-current mid, divided by that symbol's tick. The tick is an integer number of
-fixed-point quanta from the bar prices. One print off that grid does not
-refine it. The distance is that many ticks. A size or a count is ``log1p``, then its own median deviation.
-Every other lane is its own median deviation. The stored number is finite.
+Each lookback is divided by the mean and standard deviation of the candles
+already in that step. A size or a count is ``log1p`` first. A ladder price,
+``vwap``, and ``microprice`` is the distance from the mid of the same row
+first. The stored number is finite.
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from __future__ import annotations
 import numpy as np
 
 from orion.ingress.read.lanes import FEATURE_COLUMNS
-from orion.models.arcus.norm import MAD_SCALE
 
 _SIZE_EXACT: frozenset[str] = frozenset(
     {
@@ -33,114 +31,56 @@ _SIZE_EXACT: frozenset[str] = frozenset(
 )
 _SIZE_PREFIXES: tuple[str, ...] = ("bid_vol_", "ask_vol_", "bid_ord_", "ask_ord_")
 _FINITE_BOUND = float(np.finfo(np.float32).max) / 4.0
-_FIXED = 100_000_000
+WINDOW_STD_FLOOR = 1e-6
 
 
-def fit_column(values: np.ndarray) -> dict:
-    """Deviation scale for one already-natural column. ``passthrough`` means one value."""
+def natural_of(features: np.ndarray, names: tuple[str, ...]) -> np.ndarray:
+    """Natural values for ``names``. One column per name."""
 
-    finite = np.asarray(values, dtype=np.float64)
-    finite = finite[np.isfinite(finite)]
-    rows = int(finite.size)
-    uniques = np.unique(finite)
-    if uniques.size < 2:
-        location = float(uniques[0]) if uniques.size else 0.0
-        return {
-            "location": location,
-            "scale": 1.0,
-            "rows": rows,
-            "passthrough": True,
-            "kind": "constant",
-            "unit": "identity",
-        }
-    center = float(np.median(finite))
-    spread = _deviation_scale(finite, center)
-    return {
-        "location": center,
-        "scale": _finite_denominator(finite, center, spread),
-        "rows": rows,
-        "passthrough": False,
-        "kind": "mad",
-        "unit": "identity",
-    }
+    return _natural(np.asarray(features, dtype=np.float64), column_units(names))
 
 
-def fit_columns(
-    features: np.ndarray,
-    names: tuple[str, ...] | None = None,
-    prices: np.ndarray | None = None,
-) -> list[dict]:
-    """Ladder distances share the bar tick. Sizes and the other lanes keep their own."""
+def column_units(names: tuple[str, ...]) -> list[dict]:
+    """The unit of each name. Indexes point at this name list."""
 
-    matrix = np.asarray(features, dtype=np.float64)
-    chosen = _names(names, matrix.shape[1])
-    units = [_unit(name, {label: index for index, label in enumerate(chosen)}) for name in chosen]
-    natural = _natural(matrix, units)
-    step = _venue_tick(prices if prices is not None else _ladder_prices(matrix, chosen))
-    scales = []
-    for index, unit in enumerate(units):
-        if unit["unit"] == "mid":
-            finite = natural[:, index]
-            finite = finite[np.isfinite(finite)]
-            scales.append(
-                {
-                    "location": 0.0,
-                    "scale": step,
-                    "rows": int(finite.size),
-                    "passthrough": False,
-                    "kind": "book",
-                    **unit,
-                }
-            )
-            continue
-        scale = fit_column(natural[:, index])
-        scale.update(unit)
-        scales.append(scale)
-    return scales
+    indexes = {label: index for index, label in enumerate(names)}
+    return [_unit(name, indexes) for name in names]
 
 
-def stored_values(finite: np.ndarray, scale: dict) -> np.ndarray:
-    """The float32 numbers ``present_lanes`` keeps for finite natural inputs."""
+def window_mean_std(natural: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Mean and population standard deviation over the valid finite steps.
 
-    raw = np.asarray(finite, dtype=np.float64)
-    kind = scale.get("kind")
-    if kind == "constant":
-        return np.zeros(raw.shape, dtype=np.float32)
-    if kind == "book":
-        return _finite_float(raw / float(scale["scale"]))
-    if kind == "rank":
-        index = np.searchsorted(scale["uniques"], raw)
-        return index.astype(np.float32)
-    if kind == "raw" or (kind is None and scale.get("passthrough")):
-        with np.errstate(over="ignore"):
-            return raw.astype(np.float32)
-    return _finite_float((raw - float(scale["location"])) / float(scale["scale"]))
+    ``natural`` is ``(batch, time, lanes)`` and ``valid`` is ``(batch, time)``.
+    A spread at or below ``WINDOW_STD_FLOOR`` uses 1, so a flat window stores
+    zeros.
+    """
 
-
-def separates(finite: np.ndarray, scale: dict) -> bool:
-    """True when every distinct finite input has its own stored float32."""
-
-    raw = np.asarray(finite, dtype=np.float64)
-    raw = raw[np.isfinite(raw)]
-    if raw.size == 0:
-        return True
-    stored = stored_values(raw, scale)
-    if bool(np.any(~np.isfinite(stored))):
-        return False
-    return int(np.unique(stored).size) == int(np.unique(raw).size)
+    finite = np.isfinite(natural) & np.asarray(valid, dtype=bool)[..., None]
+    count = finite.sum(axis=-2).astype(np.float64)
+    filled = np.where(finite, natural, 0.0)
+    total = filled.sum(axis=-2)
+    mean = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
+    square = np.divide((filled * filled).sum(axis=-2), count, out=np.zeros_like(total), where=count > 0)
+    std = np.sqrt(np.maximum(square - mean * mean, 0.0))
+    used = np.where((count > 0) & (std > WINDOW_STD_FLOOR), std, 1.0)
+    return finite, mean, used
 
 
-def merged_count(finite: np.ndarray, scale: dict) -> int:
-    """How many distinct finite inputs share a stored value with another."""
+def apply_window(
+    natural: np.ndarray,
+    mean: np.ndarray,
+    used: np.ndarray,
+    finite: np.ndarray | None = None,
+) -> np.ndarray:
+    """Store ``(natural - mean) / used`` on the finite entries."""
 
-    raw = np.asarray(finite, dtype=np.float64)
-    raw = raw[np.isfinite(raw)]
-    if raw.size == 0:
-        return 0
-    stored = stored_values(raw, scale)
-    if bool(np.any(~np.isfinite(stored))):
-        return int(np.unique(raw).size)
-    return int(np.unique(raw).size - np.unique(stored).size)
+    raw = np.asarray(natural, dtype=np.float64)
+    scaled = (raw - mean) / used
+    keep = np.isfinite(raw) if finite is None else np.asarray(finite, dtype=bool)
+    stored = np.zeros(raw.shape, dtype=np.float32)
+    if bool(np.any(keep)):
+        stored[keep] = _finite_float(scaled[keep])
+    return stored
 
 
 def _names(names: tuple[str, ...] | None, width: int) -> tuple[str, ...]:
@@ -191,46 +131,6 @@ def _natural(values: np.ndarray, scales: list[dict]) -> np.ndarray:
     return out
 
 
-def _ladder_prices(matrix: np.ndarray, names: tuple[str, ...]) -> np.ndarray:
-    columns = [
-        index
-        for index, name in enumerate(names)
-        if name.startswith("bid_price_") or name.startswith("ask_price_")
-    ]
-    if not columns:
-        return np.zeros(0, dtype=np.float64)
-    return matrix[:, columns]
-
-
-def _venue_tick(prices: np.ndarray) -> float:
-    """Integer tick of these prices. One lone gap does not refine it.
-
-    Bar prices are fixed-point at 1e8. The tick rule multiplies that integer
-    by 10000. The same divisor is ``gcd / 1e8`` here, so the product cannot
-    overflow. Rounding the float price onto a 1e12 grid is not that product.
-    """
-
-    values = np.asarray(prices, dtype=np.float64).reshape(-1)
-    values = values[np.isfinite(values) & (values > 0.0)]
-    if values.size == 0:
-        return 1.0
-    units = np.unique(np.rint(values * _FIXED).astype(np.int64))
-    units = units[units > 0]
-    if units.size < 2:
-        return 1.0
-    gaps = np.diff(units)
-    gaps = gaps[gaps > 0]
-    if gaps.size == 0:
-        return 1.0
-    distinct, counts = np.unique(gaps, return_counts=True)
-    repeated = distinct[counts >= 2]
-    chosen = repeated if repeated.size else distinct
-    tick = int(np.gcd.reduce(chosen))
-    if tick <= 0:
-        return 1.0
-    return tick / _FIXED
-
-
 def _finite_float(scaled: np.ndarray) -> np.ndarray:
     with np.errstate(over="ignore"):
         stored = np.asarray(scaled, dtype=np.float64).astype(np.float32)
@@ -240,24 +140,3 @@ def _finite_float(scaled: np.ndarray) -> np.ndarray:
         sign[sign == 0.0] = 1.0
         stored[bad] = np.float32(sign * _FINITE_BOUND)
     return stored
-
-
-def _deviation_scale(finite: np.ndarray, center: float) -> float:
-    """Median absolute deviation. If that is zero, the same measure on the tail."""
-
-    dev = np.abs(finite - center)
-    mad = float(np.median(dev))
-    if mad == 0.0:
-        mad = float(np.median(dev[dev > 0.0]))
-    return mad * MAD_SCALE
-
-
-def _finite_denominator(finite: np.ndarray, center: float, scale: float) -> float:
-    """Widen the denominator until every learn deviation is finite in float32."""
-
-    dev = np.abs(np.asarray(finite, dtype=np.float64) - center)
-    dev = dev[np.isfinite(dev)]
-    if dev.size == 0 or scale <= 0.0:
-        return 1.0
-    need = float(np.max(dev)) / _FINITE_BOUND
-    return scale if need <= scale else need

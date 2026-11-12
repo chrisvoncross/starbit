@@ -9,9 +9,9 @@ import torch
 
 from orion.models.nova.net import Nova
 from orion.models.nova.prepare import model_inputs
-from orion.models.nova.state import state_layout, state_layout_over
+from orion.models.nova.state import state_layout
 from orion.models.nova.spec import INPUTS, SELECT_DAYS
-from orion.models.nova.train import BTC, apply_feature_scales, read_symbol, score, windows
+from orion.models.nova.train import BTC, read_symbol, score, windows
 
 
 def main() -> None:
@@ -20,13 +20,7 @@ def main() -> None:
     path = Path(sys.argv[1])
     state = torch.load(path, map_location="cpu", weights_only=False)
     raw = read_symbol(SELECT_DAYS, "select", BTC)
-    scales = state["scales"]
-    if isinstance(scales, dict):
-        layout = state_layout_over(INPUTS, scales)
-        apply_feature_scales(raw, scales[BTC])
-    else:
-        layout = state_layout(INPUTS, scales)
-        apply_feature_scales(raw, scales)
+    layout = state_layout(INPUTS)
     rows = windows(raw, layout)
     from orion.models.nova.train import apply_sketch
 

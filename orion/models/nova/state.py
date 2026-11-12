@@ -212,7 +212,7 @@ def state_layout(names: tuple[str, ...] = FEATURE_COLUMNS, scales: list[dict] | 
 
 
 def state_target(prepared: np.ndarray, index: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Scaled values and a present mask from a ``present_lanes`` row."""
+    """Scaled values and a present mask from one prepared row."""
 
     values = np.asarray(prepared, dtype=np.float32)
     lanes = values.shape[-1] // 2
