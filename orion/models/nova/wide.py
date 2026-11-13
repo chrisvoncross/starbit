@@ -478,7 +478,7 @@ def main() -> None:
                     pack["sketch_ok"],
                     sketch_abs,
                 )
-                walk = _walk(pack["times"], pack["taken"], pack["raw_valid"], pack["raw_features"], pack["used"])
+                walk = pack["walk"]
                 _select_tick(step, epoch)
                 step_fields = step_tally.fields()
                 since = tally.fields()
@@ -648,7 +648,7 @@ def _pack(item, layout):
         batch.features[ok], batch.valid[ok], raw_next, layout
     )
     sketch = _sketch(batch.ref[ok], batch.open[ok], batch.high[ok], batch.low[ok], batch.close[ok])
-    return {
+    packed = {
         "taken": np.asarray(batch.symbol[ok]),
         "feats": np.ascontiguousarray(feats),
         "valid": np.ascontiguousarray(valid),
@@ -661,7 +661,11 @@ def _pack(item, layout):
         "times": np.ascontiguousarray(batch.open_time_ms[ok]),
         "raw_valid": np.ascontiguousarray(batch.valid[ok]),
         "raw_features": np.ascontiguousarray(batch.features[ok]),
-    }, cursor
+    }
+    packed["walk"] = _walk(
+        packed["times"], packed["taken"], packed["raw_valid"], packed["raw_features"], packed["used"]
+    )
+    return packed, cursor
 
 
 def _gpu(array, device):

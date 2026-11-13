@@ -122,12 +122,42 @@ def _natural(values: np.ndarray, scales: list[dict]) -> np.ndarray:
     return out
 
 
+def scale_natural_inplace(
+    natural: np.ndarray, valid: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Scale ``natural`` in place after its mean and divisor are fixed.
+
+    The stored float32 matches ``apply_window``. ``natural`` is the scaled
+    float64 afterwards.
+    """
+
+    finite, mean, used = window_mean_std(natural, valid)
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        np.subtract(natural, mean[:, None, :], out=natural)
+        np.divide(natural, used[:, None, :], out=natural)
+    stored = np.zeros(natural.shape, dtype=np.float32)
+    if bool(np.any(finite)):
+        np.copyto(stored, natural, where=finite, casting="unsafe")
+        bad = finite & ~np.isfinite(stored)
+        if bool(np.any(bad)):
+            stored[bad] = _finite_float(np.asarray(natural[bad], dtype=np.float64))
+    return stored, mean, used, finite
+
+
+def _source(src: np.ndarray, dest: np.ndarray) -> np.ndarray:
+    """A private copy when the write would cover the values it still has to read."""
+
+    if dest.base is src.base or dest is src:
+        return np.array(src, copy=True, order="C")
+    return src
+
+
 def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
     """Write each contiguous run straight into ``out``.
 
     Book columns of one unit sit in one slice. A slice is a view, so the
     write does not gather those columns through an index list. The values
-    match one column at a time.
+    match one column at a time. ``out`` may be ``raw``.
     """
 
     count = len(scales)
@@ -141,8 +171,8 @@ def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
             index += 1
             while index < count and scales[index].get("unit", "identity") == "log1p":
                 index += 1
-            src = raw[..., start:index]
             dest = out[..., start:index]
+            src = _source(raw[..., start:index], dest)
             ok = np.isfinite(src) & (src >= 0.0)
             dest.fill(np.nan)
             if bool(np.any(ok)):
@@ -166,8 +196,8 @@ def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
                 mid = (raw[..., bid] + raw[..., ask]) / 2.0
                 mid_cache[key] = (mid, np.isfinite(mid) & (mid > 0.0))
             mid, mid_ok = mid_cache[key]
-            src = raw[..., start:index]
             dest = out[..., start:index]
+            src = _source(raw[..., start:index], dest)
             ok = np.isfinite(src) & mid_ok[..., None]
             dest.fill(np.nan)
             if bool(np.any(ok)):
@@ -175,8 +205,8 @@ def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
             continue
         if unit == "touch":
             touch_at = int(scale["touch"])
-            column = raw[..., index]
             dest = out[..., index]
+            column = _source(raw[..., index], dest)
             touch = raw[..., touch_at]
             ok = np.isfinite(column) & np.isfinite(touch) & (touch > 0.0)
             dest.fill(np.nan)
@@ -188,7 +218,8 @@ def _units(out: np.ndarray, raw: np.ndarray, scales: list[dict]) -> None:
         index += 1
         while index < count and scales[index].get("unit", "identity") == "identity":
             index += 1
-        out[..., start:index] = raw[..., start:index]
+        if out is not raw:
+            out[..., start:index] = raw[..., start:index]
 
 
 def _finite_float(scaled: np.ndarray) -> np.ndarray:

@@ -129,9 +129,15 @@ class Ring:
         filled = self.filled
         if filled < 1:
             return
-        index = (self.start + np.arange(filled)) % self.lookback
-        features[-filled:] = self.features[index]
-        valid[-filled:] = self.valid[index]
+        start = self.start
+        first = min(filled, self.lookback - start)
+        dest = self.lookback - filled
+        features[dest : dest + first] = self.features[start : start + first]
+        valid[dest : dest + first] = self.valid[start : start + first]
+        rest = filled - first
+        if rest:
+            features[dest + first : dest + filled] = self.features[:rest]
+            valid[dest + first : dest + filled] = self.valid[:rest]
 
     def restart(self, time_ms: int, close: float, features: np.ndarray) -> None:
         """Clear the ring and write the new candle in the last slot."""

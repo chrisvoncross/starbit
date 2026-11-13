@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from orion.models.nova.scale import _names, _natural, apply_window, column_units, window_mean_std
+from orion.models.nova.scale import _names, _units, apply_window, column_units, scale_natural_inplace
 
 
 def model_inputs(lanes: int) -> int:
@@ -27,18 +27,17 @@ def present_windows(
 
     ``features`` is ``(batch, time, lanes)`` of raw lanes. ``valid`` is
     ``(batch, time)``. The return is the model input, the mean, and the
-    divisor, both ``(batch, lanes)``.
+    divisor, both ``(batch, lanes)``. The call runs on the side thread,
+    beside the card.
     """
 
-    values = np.asarray(features, dtype=np.float64)
+    values = np.array(features, dtype=np.float64, copy=True, order="C")
     if values.ndim != 3:
         raise ValueError(f"windows are (batch, time, lanes), got {values.shape}")
-    chosen = _names(names, values.shape[-1])
-    natural = _natural(values, column_units(chosen))
-    finite, mean, used = window_mean_std(natural, valid)
-    stored = apply_window(natural, mean[:, None, :], used[:, None, :], finite)
-    live = np.asarray(valid, dtype=bool)[..., None]
-    bits = (~(np.isfinite(natural) & live)).astype(np.float32)
+    mask = np.asarray(valid, dtype=bool)
+    _units(values, values, column_units(_names(names, values.shape[-1])))
+    stored, mean, used, finite = scale_natural_inplace(values, mask)
+    bits = (~finite).astype(np.float32)
     return np.concatenate([stored, bits], axis=-1), mean, used
 
 
