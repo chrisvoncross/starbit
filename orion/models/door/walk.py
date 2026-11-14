@@ -10,6 +10,7 @@ import numpy as np
 
 from orion.ingress import Feed, Stream
 from orion.ingress.logger import Log
+from orion.ingress.read.stream import FeedError
 
 from .hours import hours_of, open_hour
 
@@ -88,15 +89,106 @@ def feature_scales(days: tuple[str, ...], fit: Callable, *, on_series: Callable 
     return scales
 
 
+class Walk:
+    """The one ingress pass. ``resume_state`` is the batch the step has not taken."""
+
+    def __init__(
+        self,
+        hours: tuple[str, ...],
+        *,
+        lookback: int,
+        batch: int,
+        bind: Callable | None = None,
+        seed: int = 0,
+        log: Log | None = None,
+        read: Callable | None = None,
+        excluded: tuple[int, ...] | None = None,
+        start: int | None = None,
+        resume=None,
+        aux: Callable | None = None,
+    ) -> None:
+        self._hours = tuple(hours)
+        self._lookback = lookback
+        self._batch = batch
+        self._bind = bind
+        self._seed = seed
+        self._log = log
+        self._read = read or open_hour
+        self._excluded = None if excluded is None else tuple(int(symbol) for symbol in excluded)
+        self._start = None if start is None else int(start)
+        self._resume = resume
+        self._aux = aux
+        self.stream: Stream | None = None
+        self.feed: Feed | None = None
+
+    def _open(self) -> tuple[int, tuple[int, ...], object, dict | None]:
+        if self._resume is None:
+            start = 0 if self._start is None else self._start
+            excluded = () if self._excluded is None else self._excluded
+            return start, excluded, None, None
+        if self._aux is not None:
+            raise FeedError("aux does not resume")
+        hour = int(self._resume.hour)
+        stuck = tuple(int(symbol) for symbol in self._resume.tick.stuck)
+        if self._start is not None and self._start != hour:
+            raise FeedError("stream start does not match the resume hour")
+        if self._excluded is not None and {int(symbol) for symbol in self._excluded} != set(stuck):
+            raise FeedError("stream exclusions do not match the resume")
+        return hour, stuck, self._resume.tick, dict(self._resume.last_trade_ms)
+
+    def __enter__(self) -> Walk:
+        start, excluded, tick, last_trade_ms = self._open()
+        self.stream = Stream(
+            self._hours,
+            self._read,
+            log=self._log,
+            excluded=excluded,
+            start=start,
+            tick=tick,
+            last_trade_ms=last_trade_ms,
+        )
+        self.stream.__enter__()
+        try:
+            mark = self._bind(self.stream) if self._bind is not None else None
+            aux = None if self._aux is None else self._aux()
+            width = 0 if aux is None else int(aux.width)
+            self.feed = Feed(
+                self.stream,
+                lookback=self._lookback,
+                batch=self._batch,
+                mark=mark,
+                seed=self._seed,
+                resume=self._resume,
+                log=self._log,
+                aux=aux,
+                aux_width=width,
+            )
+        except BaseException:
+            self.stream.close()
+            self.stream = None
+            raise
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        if self.feed is not None:
+            self.feed.close()
+        if self.stream is not None:
+            self.stream.__exit__(*exc)
+        return False
+
+    def __iter__(self) -> Feed:
+        if self.feed is None:
+            raise RuntimeError("the walk is not open")
+        return self.feed
+
+    def resume_state(self):
+        if self.feed is None:
+            raise RuntimeError("the walk is not open")
+        return self.feed.resume_state()
+
+
 def batches(hours: tuple[str, ...], *, lookback: int, batch: int, bind: Callable | None = None, seed: int = 0, log: Log | None = None, read: Callable | None = None) -> Iterator:
     """Yield batches in hour order. ``bind(stream)`` returns the label function, or none."""
 
-    opener = read or open_hour
-    with Stream(hours, opener, log=log) as stream:
-        mark = bind(stream) if bind is not None else None
-        feed = Feed(stream, lookback=lookback, batch=batch, mark=mark, seed=seed, log=log)
-        while True:
-            try:
-                yield next(feed)
-            except StopIteration:
-                return
+    with Walk(hours, lookback=lookback, batch=batch, bind=bind, seed=seed, log=log, read=read) as walk:
+        yield from walk

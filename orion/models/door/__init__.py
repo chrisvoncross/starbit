@@ -3,10 +3,11 @@
 from orion.ingress.logger import Log
 
 from .hours import dotenv, hour_uri, hours_of, open_hour
-from .walk import batches, feature_scales, symbol_hours
+from .walk import Walk, batches, feature_scales, symbol_hours
 
 __all__ = [
     "Log",
+    "Walk",
     "batches",
     "dotenv",
     "feature_scales",

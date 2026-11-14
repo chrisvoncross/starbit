@@ -21,7 +21,7 @@ class RingSnapshot:
     is in the last slot. There is no head index.
     """
 
-    __slots__ = ("features", "valid", "last_time", "last_close", "filled", "waiting")
+    __slots__ = ("features", "valid", "aux", "last_time", "last_close", "filled", "waiting")
 
     def __init__(
         self,
@@ -31,9 +31,11 @@ class RingSnapshot:
         last_close: float | None,
         filled: int,
         waiting: bool,
+        aux: np.ndarray | None = None,
     ) -> None:
         self.features = features
         self.valid = valid
+        self.aux = aux
         self.last_time = last_time
         self.last_close = last_close
         self.filled = filled
@@ -57,13 +59,15 @@ class Seam:
 class Ring:
     """Features and a validity flag per slot, plus the last time and close."""
 
-    def __init__(self, lookback: int, width: int = FEATURE_DIM) -> None:
+    def __init__(self, lookback: int, width: int = FEATURE_DIM, aux: int = 0) -> None:
         if lookback < 1:
             raise ValueError("lookback must be positive")
         self.lookback = int(lookback)
         self.width = int(width)
+        self.aux_width = int(aux)
         self.features = np.zeros((self.lookback, self.width), dtype=np.float64)
         self.valid = np.zeros(self.lookback, dtype=bool)
+        self.aux = None if self.aux_width < 1 else np.full((self.lookback, self.aux_width), np.nan, dtype=np.float64)
         self.start = 0
         self.last_time: int | None = None
         self.last_close: float | None = None
@@ -74,12 +78,21 @@ class Ring:
         """A copy of the logical window, before the next candle."""
         features = np.zeros((self.lookback, self.width), dtype=np.float64)
         valid = np.zeros(self.lookback, dtype=bool)
-        self._read(features, valid)
+        self._read(self.features, features)
+        self._read(self.valid, valid)
         return features, valid
 
-    def push(self, time_ms: int, close: float, features: np.ndarray) -> None:
+    def view_aux(self) -> np.ndarray:
+        """The auxiliary rows in the same order as :meth:`view`."""
+        if self.aux is None:
+            raise RuntimeError("this ring has no auxiliary rows")
+        out = np.full((self.lookback, self.aux_width), np.nan, dtype=np.float64)
+        self._read(self.aux, out)
+        return out
+
+    def push(self, time_ms: int, close: float, features: np.ndarray, aux_row: np.ndarray | None = None) -> None:
         """Append one candle that continues the current run."""
-        self._append(features, True, 1)
+        self._append(features, True, 1, aux_row)
         self.last_time = int(time_ms)
         self.last_close = float(close)
         self.waiting = True
@@ -96,18 +109,21 @@ class Ring:
         if count < 1 or self.last_time is None:
             return
         blank = np.full(self.width, np.nan, dtype=np.float64)
-        self._append(blank, True, min(count, self.lookback))
+        self._append(blank, True, min(count, self.lookback), None)
         self.last_time = int(self.last_time) + count * int(bar_ms)
         self.last_close = None
         self.waiting = True
 
-    def _append(self, row: np.ndarray, live: bool, count: int) -> None:
+    def _append(self, row: np.ndarray, live: bool, count: int, aux_row: np.ndarray | None) -> None:
         count = int(count)
         if count < 1:
             return
+        extra = self._aux_row(aux_row)
         if count >= self.lookback:
             self.features[:] = row
             self.valid[:] = live
+            if extra is not None:
+                self.aux[:] = extra
             self.start = 0
             self.filled = self.lookback
             return
@@ -119,33 +135,47 @@ class Ring:
         first = min(count, self.lookback - dest)
         self.features[dest : dest + first] = row
         self.valid[dest : dest + first] = live
+        if extra is not None:
+            self.aux[dest : dest + first] = extra
         rest = count - first
         if rest:
             self.features[:rest] = row
             self.valid[:rest] = live
+            if extra is not None:
+                self.aux[:rest] = extra
         self.filled += count
 
-    def _read(self, features: np.ndarray, valid: np.ndarray) -> None:
+    def _aux_row(self, aux_row: np.ndarray | None) -> np.ndarray | None:
+        if self.aux is None:
+            return None
+        if aux_row is None:
+            return np.full(self.aux_width, np.nan, dtype=np.float64)
+        row = np.asarray(aux_row, dtype=np.float64)
+        if row.shape != (self.aux_width,):
+            raise ValueError(f"auxiliary row must have shape ({self.aux_width},), got {row.shape}")
+        return row
+
+    def _read(self, src: np.ndarray, dest: np.ndarray) -> None:
         filled = self.filled
         if filled < 1:
             return
         start = self.start
         first = min(filled, self.lookback - start)
-        dest = self.lookback - filled
-        features[dest : dest + first] = self.features[start : start + first]
-        valid[dest : dest + first] = self.valid[start : start + first]
+        offset = self.lookback - filled
+        dest[offset : offset + first] = src[start : start + first]
         rest = filled - first
         if rest:
-            features[dest + first : dest + filled] = self.features[:rest]
-            valid[dest + first : dest + filled] = self.valid[:rest]
+            dest[offset + first : offset + filled] = src[:rest]
 
-    def restart(self, time_ms: int, close: float, features: np.ndarray) -> None:
+    def restart(self, time_ms: int, close: float, features: np.ndarray, aux_row: np.ndarray | None = None) -> None:
         """Clear the ring and write the new candle in the last slot."""
         self.features.fill(0.0)
         self.valid.fill(False)
+        if self.aux is not None:
+            self.aux.fill(np.nan)
         self.start = 0
         self.filled = 0
-        self._append(features, True, 1)
+        self._append(features, True, 1, aux_row)
         self.last_time = int(time_ms)
         self.last_close = float(close)
         self.waiting = True
@@ -158,11 +188,19 @@ class Ring:
         features.setflags(write=False)
         valid.setflags(write=False)
         close = None if self.last_close is None else float(self.last_close)
-        return RingSnapshot(features, valid, self.last_time, close, self.filled, self.waiting)
+        aux = None if self.aux is None else self.view_aux()
+        if aux is not None:
+            aux.setflags(write=False)
+        return RingSnapshot(features, valid, self.last_time, close, self.filled, self.waiting, aux)
 
     def restore(self, snap: RingSnapshot) -> None:
         if snap.features.shape != self.features.shape or snap.valid.shape != self.valid.shape:
             raise ValueError("resume ring does not match this lookback")
+        if self.aux is None:
+            if snap.aux is not None:
+                raise ValueError("resume ring has auxiliary rows and this ring does not")
+        elif snap.aux is None or snap.aux.shape != self.aux.shape:
+            raise ValueError("resume auxiliary rows do not match this ring")
         filled = int(snap.filled)
         self.features.fill(0.0)
         self.valid.fill(False)
@@ -171,6 +209,10 @@ class Ring:
         if filled:
             self.features[:filled] = snap.features[-filled:]
             self.valid[:filled] = snap.valid[-filled:]
+        if self.aux is not None:
+            self.aux.fill(np.nan)
+            if filled:
+                self.aux[:filled] = snap.aux[-filled:]
         self.last_time = None if snap.last_time is None else int(snap.last_time)
         self.last_close = None if snap.last_close is None else float(snap.last_close)
         self.waiting = bool(snap.waiting)

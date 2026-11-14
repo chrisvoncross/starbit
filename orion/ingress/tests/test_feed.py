@@ -5,15 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 from orion.ingress import Feed, Stream
-from orion.ingress.tests.tables import BASE, STEP, flat, moving, reader, table
+from orion.ingress.read.stream import FeedError
+from orion.ingress.tests.tables import BASE, STEP, flat, moving, raises, reader, table
 
 HOUR = 3_600_000
 
 
-def _feed(hours, tables, *, lookback, batch, mark=None, seed=0, holdout=()):
+def _feed(hours, tables, *, lookback, batch, mark=None, seed=0, holdout=(), aux=None, aux_width=0):
     seen = []
     stream = Stream(hours, reader(tables, seen), holdout=holdout)
-    feed = Feed(stream, lookback=lookback, batch=batch, mark=mark, seed=seed)
+    feed = Feed(stream, lookback=lookback, batch=batch, mark=mark, seed=seed, aux=aux, aux_width=aux_width)
     return stream, feed, seen
 
 
@@ -269,6 +270,79 @@ def test_a_wrapped_ring_snapshots_the_logical_window_and_restores_it():
     assert fresh.last_time == 99 + 3 * STEP
 
 
+def test_an_auxiliary_ring_stays_with_the_feature_slots():
+    from orion.ingress.feed.ring import Ring
+
+    ring = Ring(4, width=1, aux=1)
+    for value in range(6):
+        ring.push(value * STEP, float(value), np.array([float(value)]), np.array([float(value)]))
+    viewed, valid = ring.view()
+    assert viewed[:, 0].tolist() == [2.0, 3.0, 4.0, 5.0]
+    assert ring.view_aux()[:, 0].tolist() == [2.0, 3.0, 4.0, 5.0]
+    assert valid.tolist() == [True, True, True, True]
+    snap = ring.snapshot()
+    fresh = Ring(4, width=1, aux=1)
+    fresh.restore(snap)
+    assert fresh.view_aux()[:, 0].tolist() == [2.0, 3.0, 4.0, 5.0]
+    bare = Ring(4, width=1)
+    assert raises(ValueError, lambda: bare.restore(snap))
+    assert raises(ValueError, lambda: fresh.restore(bare.snapshot()))
+    wide = Ring(4, width=1, aux=2)
+    assert raises(ValueError, lambda: wide.restore(snap))
+    fresh.restart(99, 7.0, np.array([7.0]), np.array([7.0]))
+    assert fresh.view()[0][:, 0].tolist() == [0.0, 0.0, 0.0, 7.0]
+    assert np.isnan(fresh.view_aux()[:3, 0]).all()
+    assert fresh.view_aux()[3, 0] == 7.0
+    fresh.push(99 + STEP, 8.0, np.array([8.0]), np.array([8.0]))
+    fresh.cover(2, STEP)
+    covered, covered_valid = fresh.view()
+    assert covered[:, 0].tolist()[:2] == [7.0, 8.0]
+    assert np.isnan(covered[-2:, 0]).all()
+    assert covered_valid.tolist() == [True, True, True, True]
+    assert np.isnan(fresh.view_aux()[-2:, 0]).all()
+    assert fresh.view_aux()[:2, 0].tolist() == [7.0, 8.0]
+    assert raises(ValueError, lambda: fresh.push(99 + 4 * STEP, 9.0, np.array([9.0]), np.array([9.0, 9.0])))
+
+
+def test_the_auxiliary_window_excludes_the_labeled_candle():
+    calls = []
+
+    def aux(candle):
+        calls.append((int(candle.symbol), int(candle.open_time_ms)))
+        return np.array([float(candle.open_time_ms)])
+
+    rows = [
+        flat(2, 0, BASE),
+        flat(9, 0, BASE),
+        flat(2, STEP, BASE + 100),
+        flat(9, STEP, BASE + 100),
+        flat(2, 3 * STEP, BASE + 200),
+    ]
+    stream, feed, _seen = _feed(("h0",), {"h0": table(rows, lane0="time")}, lookback=4, batch=8, aux=aux, aux_width=1)
+    batches = _batches(feed)
+    stream.close()
+    assert calls == [(2, 0), (9, 0), (2, STEP), (9, STEP), (2, 3 * STEP)]
+    batch = batches[0]
+    assert batch.window_aux.shape == (len(batch), 4, 1)
+    for index in range(len(batch)):
+        stamp = int(batch.open_time_ms[index])
+        finite = batch.window_aux[index, :, 0]
+        finite = finite[np.isfinite(finite)]
+        assert finite.size
+        assert np.all(finite < stamp)
+        assert stamp not in finite.tolist()
+    hole = int(np.flatnonzero(batch.open_time_ms == 3 * STEP)[0])
+    assert np.isnan(batch.window_aux[hole, 0, 0])
+    assert batch.window_aux[hole, 1, 0] == 0
+    assert batch.window_aux[hole, 2, 0] == STEP
+    assert np.isnan(batch.window_aux[hole, 3, 0])
+
+
+def test_aux_does_not_resume():
+    caught = raises(FeedError, lambda: Feed(object(), lookback=2, batch=2, aux=lambda candle: None, aux_width=1, resume=object()))
+    assert "resume" in str(caught)
+
+
 def test_collate_keeps_hours_in_order_and_shuffles_inside_the_hour():
     from orion.ingress.feed.batch import Row, collate
 
@@ -297,6 +371,20 @@ def test_collate_keeps_hours_in_order_and_shuffles_inside_the_hour():
         if int(batch.symbol[0]) == 7:
             swapped = True
     assert swapped
+    aux = np.zeros((2, 1))
+    with_aux = [row(0, 2, 1), row(0, 7, 2)]
+    for item in with_aux:
+        item.window_aux = aux
+    stacked, _seed = collate(with_aux, 0)
+    assert stacked.window_aux.shape == (2, 2, 1)
+    mixed = [row(0, 2, 1), row(0, 7, 2)]
+    mixed[0].window_aux = aux
+    assert raises(ValueError, lambda: collate(mixed, 0))
+    other = np.zeros((2, 2))
+    mismatch = [row(0, 2, 1), row(0, 7, 2)]
+    mismatch[0].window_aux = aux
+    mismatch[1].window_aux = other
+    assert raises(ValueError, lambda: collate(mismatch, 0))
 
 
 def test_a_batch_across_hours_keeps_the_earlier_hour_first():

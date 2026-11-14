@@ -26,6 +26,7 @@ class Row:
     close: float
     ref: float
     label: object
+    window_aux: np.ndarray | None = None
 
 
 @dataclass
@@ -48,6 +49,7 @@ class Batch:
     symbol: np.ndarray
     open_time_ms: np.ndarray
     label: np.ndarray
+    window_aux: np.ndarray | None = None
 
     def __len__(self) -> int:
         return int(self.symbol.shape[0])
@@ -74,6 +76,11 @@ def collate(rows: list[Row], seed: int) -> tuple[Batch, int]:
         order = rng.permutation(len(bucket))
         picked.extend(bucket[int(index)] for index in order)
     next_seed = int(rng.integers(0, 2**31 - 1))
+    aux_shapes = [None if row.window_aux is None else tuple(row.window_aux.shape) for row in picked]
+    if any(shape is None for shape in aux_shapes) and any(shape is not None for shape in aux_shapes):
+        raise ValueError("auxiliary window is missing on a row")
+    if aux_shapes[0] is not None and any(shape != aux_shapes[0] for shape in aux_shapes):
+        raise ValueError("auxiliary windows do not share a shape")
     count = len(picked)
     lookback, width = picked[0].features.shape
     features = np.empty((count, lookback, width), dtype=np.float64)
@@ -86,6 +93,10 @@ def collate(rows: list[Row], seed: int) -> tuple[Batch, int]:
     symbol = np.empty(count, dtype=np.int64)
     open_time_ms = np.empty(count, dtype=np.int64)
     label = np.empty(count, dtype=object)
+    window_aux = None
+    if picked[0].window_aux is not None:
+        width_aux = int(picked[0].window_aux.shape[-1])
+        window_aux = np.empty((count, lookback, width_aux), dtype=np.float64)
     for index, row in enumerate(picked):
         features[index] = row.features
         valid[index] = row.valid
@@ -97,6 +108,8 @@ def collate(rows: list[Row], seed: int) -> tuple[Batch, int]:
         symbol[index] = row.symbol
         open_time_ms[index] = row.open_time_ms
         label[index] = row.label
+        if window_aux is not None:
+            window_aux[index] = row.window_aux
     batch = Batch(
         features=features,
         valid=valid,
@@ -108,5 +121,6 @@ def collate(rows: list[Row], seed: int) -> tuple[Batch, int]:
         symbol=symbol,
         open_time_ms=open_time_ms,
         label=label,
+        window_aux=window_aux,
     )
     return batch, next_seed

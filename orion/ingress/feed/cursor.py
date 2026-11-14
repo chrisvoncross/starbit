@@ -130,13 +130,15 @@ def _missing_bars(last_time: int | None, waiting: bool, time_ms: int) -> int | N
 class _Walker:
     """Candles of one hour, in time order then symbol order."""
 
-    def __init__(self, hour, rings: dict[int, Ring], origin: dict[int, Seam], skip: int, lookback: int, gaps: list[Gap], mark, log: Log) -> None:
+    def __init__(self, hour, rings: dict[int, Ring], origin: dict[int, Seam], skip: int, lookback: int, gaps: list[Gap], mark, log: Log, aux, aux_width: int) -> None:
         self.hour_index = int(hour.index)
         self.token = hour.token
         self.rings = rings
         self.lookback = lookback
         self.gaps = gaps
         self.mark = mark
+        self.aux = aux
+        self.aux_width = int(aux_width)
         self.log = log
         self.skip = int(skip)
         self.skipped = 0
@@ -184,7 +186,7 @@ class _Walker:
         close = float(series.close[index])
         ring = self.rings.get(symbol)
         if ring is None:
-            ring = Ring(self.lookback)
+            ring = Ring(self.lookback, aux=self.aux_width)
             self.rings[symbol] = ring
         kind = _relation(ring.last_time, ring.waiting, time)
         if kind == "gap":
@@ -201,23 +203,21 @@ class _Walker:
                 )
                 ring.cover(missing, CANDLE_MS)
                 kind = "next"
+        held = Candle(
+            symbol=symbol,
+            open_time_ms=time,
+            open=open_,
+            high=high,
+            low=low,
+            close=close,
+            features=candle,
+        )
         if kind == "next":
             features, valid = ring.view()
-            label = None
-            if self.mark is not None:
-                label = self.mark(
-                    Candle(
-                        symbol=symbol,
-                        open_time_ms=time,
-                        open=open_,
-                        high=high,
-                        low=low,
-                        close=close,
-                        features=candle,
-                    )
-                )
+            window_aux = None if ring.aux is None else ring.view_aux()
+            label = None if self.mark is None else self.mark(held)
             ref = float(ring.last_close) if ring.last_close is not None else float("nan")
-            ring.push(time, close, candle)
+            ring.push(time, close, candle, self._aux_row(held))
             return Row(
                 hour=int(event["hour"]),
                 symbol=symbol,
@@ -230,12 +230,19 @@ class _Walker:
                 close=close,
                 ref=ref,
                 label=label,
+                window_aux=window_aux,
             )
+        extra = self._aux_row(held)
         if kind == "start":
-            ring.push(time, close, candle)
+            ring.push(time, close, candle, extra)
         else:
-            ring.restart(time, close, candle)
+            ring.restart(time, close, candle, extra)
         return None
+
+    def _aux_row(self, candle: Candle) -> np.ndarray | None:
+        if self.aux is None:
+            return None
+        return np.asarray(self.aux(candle), dtype=np.float64)
 
 
 def _events(hour) -> tuple[list, np.ndarray]:
@@ -288,6 +295,8 @@ class Feed:
         seed: int = 0,
         resume: Resume | None = None,
         log: Log | None = None,
+        aux=None,
+        aux_width: int = 0,
     ) -> None:
         if isinstance(lookback, bool) or not isinstance(lookback, int) or lookback < 1:
             raise FeedError(f"lookback must be a positive int, got {lookback!r}")
@@ -295,7 +304,11 @@ class Feed:
             raise FeedError(f"batch must be a positive int, got {batch!r}")
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise FeedError(f"seed must be an int, got {seed!r}")
+        if resume is not None and aux is not None:
+            raise FeedError("aux does not resume")
         self._stream = stream
+        self._aux = aux
+        self._aux_width = int(aux_width)
         self._log = log if log is not None else Log(None)
         self._lookback = lookback
         self._batch = batch
@@ -435,7 +448,18 @@ class Feed:
         self._origin_at_enter = dict(origin)
         self._tick_at_enter = self._stream.tick_before()
         self._trade_at_enter = dict(self._stream.trade_before())
-        self._walker = _Walker(hour, self._rings, origin, skip, self._lookback, self.gaps, self._mark, self._log)
+        self._walker = _Walker(
+            hour,
+            self._rings,
+            origin,
+            skip,
+            self._lookback,
+            self.gaps,
+            self._mark,
+            self._log,
+            self._aux,
+            self._aux_width,
+        )
 
     def _drop_absent(self, hour) -> None:
         present = {int(series.symbol) for series in hour.series}
