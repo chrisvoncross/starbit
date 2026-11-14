@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import jax
 import jax.numpy as jnp
+import optax
 from flax import nnx
 
 from orion.models.nova.adapt.inner import adapt_once
@@ -14,6 +15,12 @@ from orion.models.nova.step import apply_logits
 
 
 def score(graphdef, params, batches, *, adapt: bool, inner_lr: float) -> dict:
+    if not adapt:
+        return _score_rows(graphdef, params, batches)
+    return _score_copies(graphdef, params, batches, adapt=True, inner_lr=inner_lr)
+
+
+def _score_copies(graphdef, params, batches, *, adapt: bool, inner_lr: float) -> dict:
     copies: dict[int, object] = {}
     losses: list[float] = []
     count = np.zeros(3, dtype=np.int64)
@@ -57,6 +64,61 @@ def score(graphdef, params, batches, *, adapt: bool, inner_lr: float) -> dict:
         "hit": hit.tolist(),
         **rates(rows_n, ideal, calls, call_hits),
     }
+
+
+def _score_rows(graphdef, params, batches) -> dict:
+    """One forward per batch. The loss is still the mean of the per-coin means."""
+
+    evaluate = jax.jit(lambda current, batch: _rows(graphdef, current, batch))
+    losses: list[float] = []
+    count = np.zeros(3, dtype=np.int64)
+    hit = np.zeros(3, dtype=np.int64)
+    rows_n = 0
+    ideal = 0
+    calls = 0
+    call_hits = 0
+    loss_sum = 0.0
+    for batch in batches:
+        token, pred = evaluate(params, _device(batch))
+        token = np.asarray(jax.device_get(token))
+        pred = np.asarray(jax.device_get(pred))
+        query = np.asarray(batch["role"]) == 1
+        labels = np.asarray(batch["y"])
+        symbols = np.asarray(batch["symbol"])
+        for symbol in np.unique(symbols):
+            sl = query & (symbols == symbol)
+            if not np.any(sl):
+                continue
+            chosen = labels[sl]
+            got = pred[sl]
+            losses.append(float(np.mean(token[sl], dtype=np.float32)))
+            loss_sum += float(token[sl].sum())
+            for cls in range(3):
+                keep = chosen == cls
+                count[cls] += int(keep.sum())
+                hit[cls] += int((got[keep] == cls).sum())
+            called = (got == 1) | (got == 2)
+            rows_n += int(chosen.shape[0])
+            ideal += int(((chosen == 1) | (chosen == 2)).sum())
+            calls += int(called.sum())
+            call_hits += int((called & (got == chosen)).sum())
+    loss = None if not losses else float(np.mean(np.asarray(losses, dtype=np.float64)))
+    loss_rows = None if rows_n < 1 else loss_sum / rows_n
+    return {
+        "loss": loss,
+        "loss_rows": loss_rows,
+        "loss_minus_prior": excess(loss, count),
+        "loss_rows_minus_prior": excess(loss_rows, count),
+        "count": count.tolist(),
+        "hit": hit.tolist(),
+        **rates(rows_n, ideal, calls, call_hits),
+    }
+
+
+def _rows(graphdef, params, batch):
+    logits = apply_logits(graphdef, params, batch["x"], batch["valid"])
+    token = optax.softmax_cross_entropy_with_integer_labels(logits, batch["y"])
+    return token, jnp.argmax(logits, axis=-1)
 
 
 def excess(loss, count) -> float | None:

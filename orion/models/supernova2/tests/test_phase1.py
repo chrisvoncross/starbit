@@ -196,6 +196,33 @@ def test_shuffle_emits_each_row_once():
     assert any(len(set(item["y"].tolist())) > 1 for item in got)
 
 
+def test_plain_score_matches_the_per_coin_mean():
+    import jax
+    from orion.models.nova.oos import _score_copies, _score_rows
+    from orion.models.nova.step import build
+
+    graphdef, params, _opt, _tx, _step = build(0, 1e-3, 11)
+    rng = np.random.default_rng(0)
+    batches = []
+    for rows, symbols in ((8, (1, 1, 1, 2, 2, 3, 3, 3)), (5, (4, 4, 5, 5, 5))):
+        batches.append(
+            {
+                "x": rng.normal(size=(rows, 4, 11)).astype(np.float32),
+                "valid": np.ones((rows, 4), dtype=bool),
+                "y": rng.integers(0, 3, size=rows).astype(np.int32),
+                "role": np.array([0, 1, 1, 1, 2, 1, 1, 1][:rows], dtype=np.int32),
+                "symbol": np.array(symbols, dtype=np.int64),
+            }
+        )
+    plain = _score_rows(graphdef, params, batches)
+    copied = _score_copies(graphdef, params, batches, adapt=False, inner_lr=0.01)
+    assert plain["count"] == copied["count"]
+    assert plain["hit"] == copied["hit"]
+    assert plain["call_pct"] == copied["call_pct"]
+    assert abs(plain["loss"] - copied["loss"]) < 1e-3
+    jax.clear_caches()
+
+
 def test_loss_minus_prior_is_zero_at_the_class_share():
     assert abs(excess(float(np.log(3.0)), [10, 10, 10])) < 1e-6
     assert excess(None, [1, 0, 0]) is None
