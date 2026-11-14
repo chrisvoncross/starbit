@@ -5,9 +5,12 @@ mainmexckey.py
 *.json
 orion/runs/**/ingress.jsonl
 orion/runs/**/events.jsonl
+orion/runs/**/*.jsonl
 orion/runs/**/*.log
 orion/runs/**/*.pid
 orion/runs/**/ckpt/**
+orion/runs/**/latest/**
+orion/runs/**/best/**
 orion/runs/**/sketch.f32
 nova-scale-*/
 *.pt

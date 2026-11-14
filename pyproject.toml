@@ -24,6 +24,15 @@ orion = [
 # Chart server. The import name is lance; the PyPI name is pylance.
 # Stay on the 14 series already on the image. Do not install the package named lance.
 # Torch stays the CUDA wheel from the orion extra. This list does not install it.
+# Phase 1. Install beside the orion extra. Ingress still needs that extra.
+# JAX is the CUDA 12 build. A plain PyPI `jax` install is the CPU wheel. Do not replace this with it.
+nova = [
+    "jax[cuda12]>=0.4.34",
+    "flax>=0.10.2",
+    "optax>=0.2.4",
+    "orbax-checkpoint>=0.11.9",
+    "grain>=0.2.9",
+]
 horizon = [
     "fastapi",
     "uvicorn[standard]",
