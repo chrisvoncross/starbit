@@ -26,7 +26,6 @@ def main() -> None:
         lr=1e-4,
         train_days=TRAIN,
         test_days=(),
-        read="state",
     )
     run(manifest, hours_of(TRAIN), read=read, log_path=LOG, ckpt_dir=CKPT)
 

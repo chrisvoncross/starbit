@@ -69,13 +69,10 @@ class Manifest:
     lr: float
     train_days: tuple[str, ...] = ()
     test_days: tuple[str, ...] = ()
-    read: str = "state"
 
     def __post_init__(self) -> None:
         if self.loss not in ("side", "next"):
             raise ValueError("a run has one loss: side or next")
-        if self.read not in ("state", "residual"):
-            raise ValueError("the head reads the state or the residual")
         if self.lookback < 1 or self.batch < 1 or self.steps < 1 or self.ckpt_every < 1:
             raise ValueError("manifest sizes must be positive")
         by_name(self.form)
