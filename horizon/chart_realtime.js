@@ -8,7 +8,7 @@ import { OhlcBarsPlugin } from './primitives/ohlc_bars_renderer.js';
 
 import { createChartContext } from './core/chart_bootstrap.js';
 import { bindLegend } from './core/legend.js';
-import { RealtimeController } from './core/realtime_controller.js?v=zerofees6';
+import { RealtimeController } from './core/realtime_controller.js?v=truezero1';
 
 const statusEl = document.getElementById('status');
 const chartContainer = document.getElementById('chart-container');

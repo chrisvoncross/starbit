@@ -1439,6 +1439,7 @@ ASSET_PATHS = {
     "indicators/luma_train/luma_train.js",
     "indicators/nordstern/nordstern.js",
     "indicators/zero_fees/zero_fees.js",
+    "indicators/true_zero/true_zero.js",
     "indicators/entropie/entropie.js",
     "indicators/entropiev2/entropiev2.js",
     "indicators/cosmo/cosmo.js",

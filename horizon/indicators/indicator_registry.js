@@ -104,11 +104,24 @@ export const DEFAULT_INDICATOR_REGISTRY = {
             tabelle: { name: 'Tabelle', color: '#e8e8e8', visible: true },
         },
     },
+    true_zero: {
+        name: 'True Zero',
+        shortName: 'True Zero',
+        type: 'overlay',
+        visible: true,
+        expanded: true,
+        paneIndex: 0,
+        features: {
+            sterne: { name: 'Sterne und Kerzen', color: '#3ddc6a', visible: true },
+            positionen: { name: 'Positionen', color: '#3ddc6a', visible: true },
+            tabelle: { name: 'Tabelle', color: '#e8e8e8', visible: true },
+        },
+    },
     zero_fees: {
         name: '0 Fees',
         shortName: '0 Fees',
         type: 'overlay',
-        visible: true,
+        visible: false,
         expanded: true,
         paneIndex: 0,
         features: {
