@@ -87,7 +87,49 @@ def lane_shift(full: np.ndarray, altered: np.ndarray, width: int) -> float:
     return float(np.abs(np.asarray(altered) - np.asarray(full)).mean()) / width
 
 
+def lane_shift_rows(full: np.ndarray, altered: np.ndarray, width: int) -> np.ndarray:
+    """One shift per window. The mean of these is ``lane_shift``."""
+
+    if width < 1:
+        raise ValueError("a group needs a lane")
+    delta = np.abs(np.asarray(altered, dtype=np.float64) - np.asarray(full, dtype=np.float64))
+    if delta.ndim < 2:
+        return np.asarray([float(delta.mean()) / width], dtype=np.float64)
+    return delta.mean(axis=tuple(range(1, delta.ndim))) / width
+
+
 def lane_pull(grad: np.ndarray, index: np.ndarray) -> float:
     if index.size < 1:
         raise ValueError("a group needs a lane")
     return float(np.abs(np.asarray(grad)[..., index]).mean())
+
+
+def lane_pull_rows(grad: np.ndarray, index: np.ndarray) -> np.ndarray:
+    """One pull per window. The mean of these is ``lane_pull``."""
+
+    if index.size < 1:
+        raise ValueError("a group needs a lane")
+    picked = np.abs(np.asarray(grad, dtype=np.float64)[..., index])
+    if picked.ndim < 2:
+        return np.asarray([float(picked.mean())], dtype=np.float64)
+    return picked.mean(axis=tuple(range(1, picked.ndim)))
+
+
+def share_span(raw_rows: list[dict[str, float]], prefix: str) -> dict[str, float | int | None]:
+    """Max share minus min share across windows. One window leaves the span empty."""
+
+    kept = []
+    for raw in raw_rows:
+        report = shares(raw, prefix)
+        if report[f"{prefix}_ohlc"] is None:
+            continue
+        kept.append(report)
+    out: dict[str, float | int | None] = {f"{prefix}_span_n": len(kept)}
+    if len(kept) < 2:
+        for name in NAMES:
+            out[f"{prefix}_{name}_span"] = None
+        return out
+    for name in NAMES:
+        values = [float(row[f"{prefix}_{name}"]) for row in kept]
+        out[f"{prefix}_{name}_span"] = max(values) - min(values)
+    return out

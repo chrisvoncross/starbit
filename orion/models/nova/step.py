@@ -15,7 +15,7 @@ from .data.batch import answers, inputs, next_bins
 from .loss import select
 from .memory import Entry, shift
 from .spec import TICK
-from .use import NAMES, VALUE, groups, lane_pull, lane_shift, shares
+from .use import NAMES, VALUE, groups, lane_pull_rows, lane_shift_rows, share_span, shares
 from .vary import feat_std, margin_std
 
 
@@ -211,13 +211,14 @@ def _head_input(model, out):
 
 
 def _group_shares(raw, prefix: str) -> dict:
-    if not raw:
+    rows = [item for batch in raw for item in batch]
+    if not rows:
         return {}
-    mean = {name: float(np.mean([item[name] for item in raw])) for name in NAMES}
-    return shares(mean, prefix)
+    mean = {name: float(np.mean([item[name] for item in rows])) for name in NAMES}
+    return {**shares(mean, prefix), **share_span(rows, prefix)}
 
 
-def _pulled(watched) -> list[dict[str, float]]:
+def _pulled(watched) -> list[list[dict[str, float]]]:
     found = groups()
     raw = []
     for incoming in watched:
@@ -225,23 +226,26 @@ def _pulled(watched) -> list[dict[str, float]]:
         if grad is None:
             continue
         values = grad.detach().float().cpu().numpy()
-        raw.append({name: lane_pull(values, index) for name, index in found.items()})
+        pulls = {name: lane_pull_rows(values, index) for name, index in found.items()}
+        count = len(next(iter(pulls.values())))
+        raw.append([{name: float(pulls[name][row]) for name in NAMES} for row in range(count)])
     return raw
 
 
 @torch.no_grad()
-def _blanked(model, incoming, states, full) -> dict[str, float]:
+def _blanked(model, incoming, states, full) -> list[dict[str, float]]:
     found = groups()
     base = full.detach().float().cpu().numpy()
-    raw = {}
+    shifts = {}
     for name, index in found.items():
         alt = incoming.detach().clone()
         alt[..., index] = 0
         alt[..., index + VALUE] = 0
         cloned = tuple(tuple(part.detach().clone() for part in layer) for layer in states)
         side = model(alt, cloned)["side"]
-        raw[name] = lane_shift(base, side.detach().float().cpu().numpy(), int(index.size))
-    return raw
+        shifts[name] = lane_shift_rows(base, side.detach().float().cpu().numpy(), int(index.size))
+    count = len(next(iter(shifts.values())))
+    return [{name: float(shifts[name][row]) for name in NAMES} for row in range(count)]
 
 
 def _grad_norm(module) -> float | None:

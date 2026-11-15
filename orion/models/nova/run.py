@@ -79,7 +79,12 @@ def run(
     total_off_rides = 0
     ride = Ride()
     align = Align()
-    group_sum = {name: 0.0 for name in ("use_ohlc", "use_book", "use_trade", "use_other", "pull_ohlc", "pull_book", "pull_trade", "pull_other")}
+    group_sum = {name: 0.0 for name in (
+        "use_ohlc", "use_book", "use_trade", "use_other",
+        "pull_ohlc", "pull_book", "pull_trade", "pull_other",
+        "use_ohlc_span", "use_book_span", "use_trade_span", "use_other_span",
+        "pull_ohlc_span", "pull_book_span", "pull_trade_span", "pull_other_span",
+    )}
     group_n = {name: 0 for name in group_sum}
     with open_walk(
         hours,
@@ -154,6 +159,16 @@ def run(
                 pull_book=report.get("pull_book"),
                 pull_trade=report.get("pull_trade"),
                 pull_other=report.get("pull_other"),
+                use_span_n=report.get("use_span_n"),
+                use_ohlc_span=report.get("use_ohlc_span"),
+                use_book_span=report.get("use_book_span"),
+                use_trade_span=report.get("use_trade_span"),
+                use_other_span=report.get("use_other_span"),
+                pull_span_n=report.get("pull_span_n"),
+                pull_ohlc_span=report.get("pull_ohlc_span"),
+                pull_book_span=report.get("pull_book_span"),
+                pull_trade_span=report.get("pull_trade_span"),
+                pull_other_span=report.get("pull_other_span"),
                 running_use_ohlc=None if group_n["use_ohlc"] == 0 else group_sum["use_ohlc"] / group_n["use_ohlc"],
                 running_use_book=None if group_n["use_book"] == 0 else group_sum["use_book"] / group_n["use_book"],
                 running_use_trade=None if group_n["use_trade"] == 0 else group_sum["use_trade"] / group_n["use_trade"],
@@ -162,6 +177,14 @@ def run(
                 running_pull_book=None if group_n["pull_book"] == 0 else group_sum["pull_book"] / group_n["pull_book"],
                 running_pull_trade=None if group_n["pull_trade"] == 0 else group_sum["pull_trade"] / group_n["pull_trade"],
                 running_pull_other=None if group_n["pull_other"] == 0 else group_sum["pull_other"] / group_n["pull_other"],
+                running_use_ohlc_span=None if group_n["use_ohlc_span"] == 0 else group_sum["use_ohlc_span"] / group_n["use_ohlc_span"],
+                running_use_book_span=None if group_n["use_book_span"] == 0 else group_sum["use_book_span"] / group_n["use_book_span"],
+                running_use_trade_span=None if group_n["use_trade_span"] == 0 else group_sum["use_trade_span"] / group_n["use_trade_span"],
+                running_use_other_span=None if group_n["use_other_span"] == 0 else group_sum["use_other_span"] / group_n["use_other_span"],
+                running_pull_ohlc_span=None if group_n["pull_ohlc_span"] == 0 else group_sum["pull_ohlc_span"] / group_n["pull_ohlc_span"],
+                running_pull_book_span=None if group_n["pull_book_span"] == 0 else group_sum["pull_book_span"] / group_n["pull_book_span"],
+                running_pull_trade_span=None if group_n["pull_trade_span"] == 0 else group_sum["pull_trade_span"] / group_n["pull_trade_span"],
+                running_pull_other_span=None if group_n["pull_other_span"] == 0 else group_sum["pull_other_span"] / group_n["pull_other_span"],
                 lag_n=report.get("lag_n"),
                 lag0=report.get("lag0"),
                 lag_prev=report.get("lag_prev"),
