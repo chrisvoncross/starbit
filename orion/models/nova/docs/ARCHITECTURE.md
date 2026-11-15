@@ -6,6 +6,8 @@ Nova ist das Weltmodell. Es importiert kein Netz, keinen Verlust und keinen Chec
 
 Der Code liegt unter `orion/models/nova/`. `supernova2` importiert denselben Paketnamen aus der Zeit, als hier die Phasenreihe lag. Diese Dateien sind Nova. Sie stellen die Phasenreihe nicht wieder her.
 
+Der Block ist die offizielle Schicht `mamba_ssm.modules.mamba3.Mamba3` aus `state-spaces/mamba`. Nova schreibt diese Rekurrenz nicht noch einmal. Die JAX-Dateien, die in diesem Baum liegen, sind nicht dieser Plan.
+
 Die Aufgabe bleibt das Zielbild in `orion/models/nova/docs/zielbild.md`. Die Suche nach Hoch, Tief oder noch nicht steht als eigene Funktion in diesem Baum. Door bekommt sie nur als aufrufbare Beschriftung.
 
 ## Was belegt ist
@@ -59,7 +61,9 @@ Zwei weitere Stunden, auf demselben Weg geöffnet, je allein: `2026-10-07T12` un
 
 ## Laufumgebung
 
-JAX, Flax NNX, Optax, Orbax, Grain. Der Scan der Trapezform wird in JAX geschrieben, aus der veröffentlichten Rekurrenz. Ein CUDA-Kern aus `state-spaces/mamba` kommt erst, wenn eine gemessene Spur zeigt, dass der Scan auf den Schritt wartet. Bis dahin gibt es kein `speed/`. PyTorch wird nicht eingeführt. Der GPL-Baum wird nicht eingebunden.
+[Studie] Die Studie rechnet Mamba-3. [Studie] Die veröffentlichte Umsetzung dieser Architektur ist `state-spaces/mamba`, Apache-2.0, Schicht `mamba_ssm/modules/mamba3.py`. [Stunde] Der neueste Bibliotheksstand mit dieser Schicht ist `mamba-ssm` `2.3.2.post1`, veröffentlicht am 2026-05-09 unter https://github.com/state-spaces/mamba/releases/tag/v2.3.2.post1. Die Tag-Nummer zählt die Bibliothek, nicht die Architektur. [Stunde] Fertige Räder dieses Stands gibt es für PyTorch bis `2.10.0` und für CUDA `11.8.0`, `12.9.1` und `13.0.1`. Für PyTorch `2.15` und CUDA `13.4` gibt es kein fertiges Rad. Quelle: `.github/workflows/publish.yaml` in demselben Repository.
+
+[Wahl] Nova nimmt dieses Paket, nicht eine eigene Abschrift. [Wahl] PyTorch ist `2.9.1` auf CUDA `13.0`. Das ist das neueste Paar, für das es zugleich ein fertiges offizielles Mamba-Rad und ein aktuelles RunPod-Bild gibt. [Wahl] Der Pod ist das Hub-Template „Runpod PyTorch 2.9 CUDA 13.0“, ein einzelner Pod. Der Titel sagt 2.9. Das Bild installiert `torch==2.9.1` aus dem CUDA-13-Index. Der Image-Name enthält `cu1300` und `torch291` und endet nicht auf `-cluster`. [Wahl] „Runpod Pytorch 2.9.0 for clusters“, https://console.runpod.io/hub/template/a9dk3g7cny, ist dieselbe PyTorch- und CUDA-Wahl für mehrere Maschinen und ist nicht dieser Pod. [Wahl] `2.2.0-rc.229-cu1300-torch291-ubuntu2404` ist ein Docker-Tag, kein Template-Name. [Wahl] Ein `pip install torch` von PyPI ersetzt das CUDA-Rad auf diesem Bild. Das passiert nicht. [Wahl] JAX, Flax, Optax, Orbax und Grain gehören nicht zu Nova. [Wahl] Der GPL-Baum wird nicht eingebunden. [Wahl] `speed/` gibt es nicht. Der Kern ist der des Pakets.
 
 Die Kernel-Ridge-Auslese der Studie läuft nach dem Lauf auf dem Host, an einem eingefrorenen Stand. Sie liegt nicht im Schritt.
 
@@ -95,7 +99,7 @@ Jeder Satz dieser Sektion und der Läufe trägt eine Marke. [Studie] heißt: ver
 
 ### Das Gedächtnis
 
-[Studie] Mamba-3 schreibt den Zustand als h_t = α_t · h_{t−1} + β_t · B_{t−1} x_{t−1} + γ_t · B_t x_t. [Studie] Dabei ist α_t = exp(Δ_t A_t), β_t = (1 − λ_t) Δ_t exp(Δ_t A_t), γ_t = λ_t Δ_t, und λ_t in [0, 1] hängt von der Eingabe ab. [Studie] λ = 1 gibt die Euler-Form von Mamba-2, λ = ½ die klassische Trapezregel. [Studie] Quelle: Lahoti et al., Proposition 1, https://arxiv.org/abs/2603.15569. [Studie] Die komplexe Form mit Drehung auf B und C ist Proposition 4 desselben Textes. [Studie] Abbildung 1 bei Mohl et al. zeigt dieselbe Rekurrenz mit zwei Schreibvorgängen. [Studie] Je Kopf ist h eine Matrix. [Studie] Der Ausgang einer Schicht liest h mit C_t und geht in den Residualstrom. [Wahl] Die Maschine rechnet diese Rekurrenz in JAX, SISO, mit Drehwinkel auf B und C, ohne Conv1d.
+[Studie] Mamba-3 schreibt den Zustand als h_t = α_t · h_{t−1} + β_t · B_{t−1} x_{t−1} + γ_t · B_t x_t. [Studie] Dabei ist α_t = exp(Δ_t A_t), β_t = (1 − λ_t) Δ_t exp(Δ_t A_t), γ_t = λ_t Δ_t, und λ_t in [0, 1] hängt von der Eingabe ab. [Studie] λ = 1 gibt die Euler-Form von Mamba-2, λ = ½ die klassische Trapezregel. [Studie] Quelle: Lahoti et al., Proposition 1, https://arxiv.org/abs/2603.15569. [Studie] Die komplexe Form mit Drehung auf B und C ist Proposition 4 desselben Textes. [Studie] Abbildung 1 bei Mohl et al. zeigt dieselbe Rekurrenz mit zwei Schreibvorgängen. [Studie] Je Kopf ist h eine Matrix. [Studie] Der Ausgang einer Schicht liest h mit C_t und geht in den Residualstrom. [Wahl] Die Maschine ruft dafür `Mamba3` aus `mamba_ssm.modules.mamba3`, SISO, mit der Drehung, die diese Schicht vorgibt, ohne Conv1d. [Wahl] Sie schreibt die Rekurrenz nicht noch einmal. [Wahl] Das Gedächtnis je Symbol ist der Zustand, den diese Schicht zwischen zwei Schritten trägt. Die Namen der Felder liest der Code aus dieser Schicht. Sie werden hier nicht erraten.
 
 [Studie] Mohl et al. finden den Markt im rekurrenten Zustand, nicht im Residualstrom. [Studie] Der Touch erreicht R² 0,83 im Zustand und 0,26 im Residualstrom. [Wahl] Die Entscheidung liest deshalb h am Schluss. [Wahl] Sie liest nicht den Residualstrom der letzten Stelle und kein Mittel über das Fenster. [Wahl] Je Schicht und Kopf hält der Entscheidungskopf einen gelernten Lesevektor q über die Zustandsbreite. [Wahl] h · q gibt je Kopf einen Vektor der Kopfbreite. [Wahl] Diese Vektoren aller Schichten und Köpfe gehen in eine lineare Schicht auf die Logits. [Wahl] Ein Zwilling gleicher Größe liest stattdessen den Residualstrom am Schluss, mit demselben Verlust, in einem eigenen Lauf.
 
@@ -195,25 +199,25 @@ Offen:
 | `label.py` | Suche des Zielbilds mit einem Tick. Den Rest der gehaltenen Stunde liest sie aus der Stunde, die Door hält. Der Vorgriff ist ein Aufruf und wird erst gerufen, wenn der Pfad diese Stunde verlässt. Die Datei zählt nur, wenn sie zeitlich anschließt. Die Suche endet an deren letzter Kerze. `mark_hour` wird nicht gerufen. |
 | `data/walk.py` | Eine `Walk` aus Door. Bindet die Beschriftung und die vier Preise der geschlossenen Kerzen als `aux`. Öffnet den See nicht. Die Lesestelle aus dem Checkpoint geht als `resume` an Door zurück. |
 | `data/batch.py` | Nimmt den Batch, den Door schon baut. In den Zustand gehen die 216 Spuren und die vier Preise aus `window_aux`. Eine leere Zelle wird 0, daneben ein Maskenbit. Open, High, Low, Close der Zeile und `ref` bleiben die Antwort und gehen nicht in den Zustand. |
-| `data/scale.py` | Eine Skala je Spur über `feature_scales` auf den Übungstagen. Die Formel gehört dem Modell. Door gibt sie nicht vor. |
-| `memory.py` | Je Symbol der Zustand, das vorige B, das vorige x und der Drehwinkel, geordnet nach der Kerzenzeit. Null nur am Strombeginn, bei `restart` des Rings und bei einer neuen Reihe. |
-| `net/scan.py` | Die Trapez-Rekurrenz in JAX, wie unter „Das Gedächtnis“ geschrieben. Die vier Teile bleiben getrennt. Kein Conv1d. |
-| `net/block.py` | Eine Schicht. Die Eingangsprojektion teilt sich in Tor, Wert, B, C, dt, A, Trapez-Tor und Drehwinkel. Sie liefert den Residualstrom und den Zustand. |
+| `data/scale.py` | Je Symbol eine eigene Skala je Spur, auf den Übungstagen. Für ein Symbol, das dort fehlt, bleibt die gemeinsame Skala. Die Formel gehört dem Modell. Door gibt sie nicht vor. |
+| `memory.py` | Je Symbol der Zustand, den `Mamba3` zwischen zwei Schritten zurückgibt, geordnet nach der Kerzenzeit. Null nur am Strombeginn, bei `restart` des Rings und bei einer neuen Reihe. |
+| `net/block.py` | Eine Schicht aus `mamba_ssm.modules.mamba3.Mamba3`. Keine zweite Rekurrenz. Kein Conv1d. |
 | `net/read.py` | Am Schluss der Zustand jeder Schicht über einen gelernten Lesevektor. Der Residualstrom der letzten Stelle bleibt daneben, für den Vergleichslauf. |
 | `net/head.py` | Drei Logits aus dem Zustand am Schluss. |
 | `net/next.py` | Die nächste Kerze an jeder Stelle des Fensters, als Kategorien. Das ist der Kopf von Lauf 3. `net/head.py` liest nur den Schluss. |
 | `net/level.py` | Späterer Lauf. Auf der genannten Seite das Hoch oder das Tief der nächsten Kerze in Ticks zu `ref`. Nicht Teil des ersten Laufs. |
 | `net/model.py` | Stapelt Einbettung, Schichten, Lesen, die drei Logits, die nächste Kerze und den Stufenkopf. Der Zustand, den die nächste Zeile braucht, ist der nach der ältesten Kerze des Fensters. |
 | `loss.py` | Ein Lauf, ein Verlust. Entweder die drei Antworten oder die nächste Kerze als Kategorien. Nicht beides in einem Schritt. |
+| `ride.py` | [Wahl] Zweite Rechnung neben dem Verlust, nur für die drei Antworten. `acc` ist der Anteil, der den Indikator trifft. `off` ist der Rest, eins minus diesen Anteil. `ride` ist der Anteil der Zeilen, die eine Hoch-Tief-Strecke fortsetzen: die Vorhersage wechselt zwischen unten und oben, die beantwortete Kerze ist mindestens einen Tick weit, und sie folgt der vorigen Kerze desselben Symbols unmittelbar. Das zählt auch, wenn der Indikator etwas anderes sagt. `off_ride` ist dieser Anteil nur unter den Zeilen, die den Indikator verfehlen. `ride_max` ist die längste solche Strecke. `hit_max` ist die längste Folge von Indikatortreffern. Eine Lücke, eine Wiederholung derselben Seite oder „noch nicht“ setzt die Strecke neu. Zeilen ohne Beschriftung zählen nicht. |
 | `probe.py` | Nach dem Lauf, auf dem Host, am eingefrorenen Stand. Gedächtnisproben gegen das lineare Auslesen derselben Spuren und gegen den Zwilling. |
 | `note.py` | Die ungesehene Note der drei Antworten, die `best` schreibt. Dieselbe Note ohne die letzten Kerzen jeder Stunde. Der Vergleich von Lauf 1 mit dem linearen Auslesen derselben Spuren. |
 | `steer.py` | Eine Richtung im Zustand. Gemessen wird die Verschiebung der drei Logits. Dreißig normgleiche Achsen aus vertauschten Beschriftungen. Legt keine Order. |
-| `ckpt.py` | Eine Datei. Sie hält die Gewichte, das Gedächtnis je Symbol und die Lesestelle von Door. Door bekommt beim Weiterlauf nur die Lesestelle. |
-| `step.py` | Eine kompilierte Funktion je Lauf. |
-| `log.py` | Eine Zeile je Tatsache: Lauf, Schritt, Verlust, Checkpoint, abgeschnittene Beschriftung. Ohne Pfad bleibt es im Speicher. |
-| `run.py` | Das Manifest zuerst, dann die Stunden über Door. |
+| `ckpt.py` | Ein Verzeichnis. Es hält die PyTorch-Gewichte, das Gedächtnis je Symbol, den Optimierer, den Schritt, die Skala und die Lesestelle von Door. Door bekommt beim Weiterlauf nur die Lesestelle. |
+| `step.py` | Ein Schritt in PyTorch. Ein Lauf, ein Verlust. Bei den drei Antworten führt derselbe Schritt `ride.py` in der Zeitfolge je Symbol. |
+| `log.py` | Eine Zeile je Tatsache: Lauf, Stunde, Skala, Schritt, Verlust, Indikatortreffer, Rest, Hoch-Tief-Strecke, längste Strecke, längste Trefferfolge, die drei Logits, der Gradient am Kopf und der Gradient an den Schichten, Checkpoint, abgeschnittene Beschriftung. Ohne Pfad bleibt es im Speicher. Die Zeile wird sofort geschrieben. |
+| `run.py` | Das Manifest zuerst, dann die Stunden über Door. Der Lauf hält die laufenden Anteile aus `ride.py` und schreibt sie in jede Schrittzeile. |
 
-[Wahl] `speed/` wird nicht angelegt, bis eine gemessene Spur zeigt, dass der Scan auf den Schritt wartet. [Wahl] `data/deals.py` gibt es nicht. Door liefert die Trade-Liste nicht. [Wahl] Grain steht im Extra und ist kein zweiter Strom. Door ist der Strom.
+[Wahl] `data/deals.py` gibt es nicht. Door liefert die Trade-Liste nicht. [Wahl] Door ist der Strom. Es gibt keinen zweiten Lader.
 
 ## Annahmen
 
@@ -263,4 +267,6 @@ Abgenommen als Quellen, nicht als Befunde der Studie. β und γ stehen in Propos
 
 Zurückgenommen. Die Beschriftung ist nicht mehr der Stunden-Schnitt von `mark_hour`. `label.py` ist die Suche des Zielbilds. Der Vorgriff ist die eine anschließende Datei und wird erst gerufen, wenn der Pfad die gehaltene Stunde verlässt.
 
-Offen, und die Studie schließt es nicht. Die Formel von `vwap`. Die Rechnung hinter den Namen in `lanes.py`. Drei Stunden sind keine Verteilung der Löcher. `abdi_ranaldo_spread` ist in allen drei zur Hälfte leer. Auf BTC-Kerzen ist von der Studie nichts gemessen. Die Feldnamen `ssm_state`, `k_state`, `v_state`, `angle_dt_state` sind hier nicht gegen den Quelltext gehalten. Die vier Teile, Zustand, voriges B, voriges x und Drehwinkel, folgen aus Proposition 1 und Proposition 4. Der Code unter `orion/models/nova/` ist diese Maschine, untrainiert. Er schlägt die Studie nicht.
+Zurückgenommen. Die Rekurrenz wird nicht in JAX abgeschrieben. Der Block ist `Mamba3` aus `mamba-ssm` `2.3.2.post1`. JAX, Flax, Optax, Orbax und Grain gehören nicht zu Nova. Die JAX-Dateien in diesem Baum sind nicht dieser Plan.
+
+Offen, und die Studie schließt es nicht. Die Formel von `vwap`. Die Rechnung hinter den Namen in `lanes.py`. Drei Stunden sind keine Verteilung der Löcher. `abdi_ranaldo_spread` ist in allen drei zur Hälfte leer. Auf BTC-Kerzen ist von der Studie nichts gemessen. Die Feldnamen, die `Mamba3` für den Zustand zwischen zwei Schritten führt, liest der Code aus dieser Schicht. Sie werden hier nicht erraten.
