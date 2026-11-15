@@ -14,8 +14,10 @@ number of times. Auth is not retried. A hole is not retried. The held hour
 is left untouched. After the limit, ``next`` sees the error when it asks
 for that hour.
 
-``ahead`` returns that one prefetched file for a label. It does not take
-the prefetch, does not open a file past it, and does not read
+``ahead`` waits for that one prefetched file and returns it for a label.
+A caller that does not need the file yet does not call ``ahead``, so
+the fetch keeps running while the step computes. It does not take the
+prefetch, does not open a file past it, and does not read
 ``feature_vec``. A missing file is a hole with no candles.
 """
 
@@ -283,11 +285,13 @@ class Stream:
     def ahead(self) -> Ahead | None:
         """The one prefetched file, or none when this hold did not start one.
 
-        Does not take the prefetch and does not open the file after it.
-        Prices only: ``feature_vec`` is not read, and the tick rule is not
+        Calling this waits until the prefetch has finished. It does not
+        take the prefetch and does not open the file after it. Prices
+        only: ``feature_vec`` is not read, and the tick rule is not
         folded. A missing file is a hole with no candles. The same object
         is returned until the prefetch is taken. ``None`` at the end of the
-        list and when the next token is a holdout.
+        list and when the next token is a holdout. The token is the next
+        name in the caller's list, which is not always the next hour.
         """
 
         if self._closed:

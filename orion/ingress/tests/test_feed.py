@@ -368,17 +368,18 @@ def test_mark_can_read_the_prefetched_hour_without_writing_the_ring():
     seen_ahead = []
 
     def mark(candle, ahead=None):
-        assert ahead is candle.ahead()
+        path = None if ahead is None else ahead()
+        assert path is candle.ahead()
         stamp = int(candle.open_time_ms)
         if stamp < HOUR:
             assert "h2" not in seen
             assert seen.count("h1") == 1
-            assert ahead is not None and ahead.token == "h1"
-            assert len(ahead.series) == 1
-            assert ahead.series[0].open_time_ms.tolist() == [HOUR, HOUR + STEP]
-        seen_ahead.append(None if ahead is None else (ahead.token, ahead.hole, len(ahead.series)))
-        if ahead is not None:
-            assert not hasattr(ahead.series[0], "features")
+            assert path is not None and path.token == "h1"
+            assert len(path.series) == 1
+            assert path.series[0].open_time_ms.tolist() == [HOUR, HOUR + STEP]
+        seen_ahead.append(None if path is None else (path.token, path.hole, len(path.series)))
+        if path is not None:
+            assert not hasattr(path.series[0], "features")
         return stamp
 
     calls = {"n": 0}
@@ -421,6 +422,50 @@ def test_mark_can_read_the_prefetched_hour_without_writing_the_ring():
             assert batch.label[index] == stamp
     assert seen.count("h1") == 1
     assert seen.count("h2") == 1
+
+
+def test_an_unread_lookahead_does_not_block_the_batch():
+    import threading
+
+    release = threading.Event()
+    entered = threading.Event()
+    tables = {
+        "h0": table([moving(2, step * STEP, step) for step in range(4)], lane0="time"),
+        "h1": table([moving(2, HOUR + step * STEP, step) for step in range(2)], lane0="time"),
+    }
+
+    def read(token):
+        if token == "h1":
+            entered.set()
+            if not release.wait(2):
+                raise TimeoutError(token)
+        return tables[token]
+
+    def mark(candle, ahead=None):
+        assert ahead is not None
+        return int(candle.open_time_ms)
+
+    stream = Stream(("h0", "h1"), read)
+    feed = Feed(stream, lookback=4, batch=2, mark=mark)
+    box = {}
+
+    def pull():
+        try:
+            box["batch"] = next(feed)
+        except Exception as exc:
+            box["error"] = exc
+
+    thread = threading.Thread(target=pull)
+    thread.start()
+    assert entered.wait(1)
+    thread.join(0.3)
+    finished = not thread.is_alive()
+    release.set()
+    thread.join(2)
+    stream.close()
+    assert finished
+    assert not box.get("error"), box.get("error")
+    assert len(box["batch"]) == 2
 
 
 def test_a_one_argument_mark_still_receives_one_candle():

@@ -5,10 +5,12 @@ one candle later (15000 ms). The input is the ring. Beside it are the
 unscaled open, high, low, and close of that next candle, the close
 of the candle the row is taken at, and the label ``mark`` gave the next
 candle. ``mark`` runs only while the hour is in memory. A mark that
-accepts a second argument, or that calls :meth:`Candle.ahead`, may read
-the one prefetched file. Those rows are not written into the ring. No
-further file is opened and no candle is invented. This package does not
-know the star rule.
+accepts a second argument receives a call. Invoking that call, or
+calling :meth:`Candle.ahead`, waits for the one prefetched file and
+reads its four prices. A mark that does not invoke it leaves the fetch
+running. Those rows are not written into the ring. No further file is
+opened and no candle is invented. This package does not know the star
+rule.
 
 The last candle of an hour waits for the first candle of the next hour
 only when that candle is exactly one step later. A holdout, a hole, and
@@ -233,7 +235,7 @@ class _Walker:
 
     def _label(self, held: Candle):
         if self._pass_ahead:
-            return self.mark(held, held.ahead())
+            return self.mark(held, held.ahead)
         return self.mark(held)
 
     def _apply(self, event) -> Row | None:
