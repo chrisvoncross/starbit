@@ -24,14 +24,18 @@ orion = [
 # Chart server. The import name is lance; the PyPI name is pylance.
 # Stay on the 14 series already on the image. Do not install the package named lance.
 # Torch stays the CUDA wheel from the orion extra. This list does not install it.
-# Phase 1. Install beside the orion extra. Ingress still needs that extra.
-# JAX is the CUDA 12 build. A plain PyPI `jax` install is the CPU wheel. Do not replace this with it.
+# Nova, the market world model. Install beside the orion extra. Door and Ingress still need that extra.
+# The block is official mamba-ssm 2.3.2.post1. PyTorch is 2.9.1 on CUDA 13.0.
+# That pair is the newest one with an official Mamba wheel and a current RunPod image.
+# The pod is the Hub template "Runpod PyTorch 2.9 CUDA 13.0", one machine.
+# The title says 2.9. The image installs torch==2.9.1 from the CUDA 13 index.
+# The image name contains cu1300 and torch291 and does not end in -cluster.
+# "Runpod Pytorch 2.9.0 for clusters" (a9dk3g7cny) is the same pair for several machines. Not this pod.
+# A plain PyPI `torch` install replaces the CUDA wheel already on that image. Do not do that.
 nova = [
-    "jax[cuda12]>=0.4.34",
-    "flax>=0.10.2",
-    "optax>=0.2.4",
-    "orbax-checkpoint>=0.11.9",
-    "grain>=0.2.9",
+    "numpy>=1.26",
+    "torch==2.9.1",
+    "mamba-ssm==2.3.2.post1",
 ]
 horizon = [
     "fastapi",
