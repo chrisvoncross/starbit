@@ -13,6 +13,10 @@ They are not holes. The prefetch of the one next file may retry a bounded
 number of times. Auth is not retried. A hole is not retried. The held hour
 is left untouched. After the limit, ``next`` sees the error when it asks
 for that hour.
+
+``ahead`` returns that one prefetched file for a label. It does not take
+the prefetch, does not open a file past it, and does not read
+``feature_vec``. A missing file is a hole with no candles.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from ..logger import Log
 from .exclude import TickRule, TickState
-from .frame import Series, hour_frames, trade_clock
+from .frame import Series, hour_frames, price_paths, trade_clock
 from .lake import is_auth
 
 PREFETCH_ATTEMPTS = 3
@@ -62,6 +66,29 @@ class Hour:
     def clear(self) -> None:
         """Drop the candle arrays. The token and the exclusion set stay."""
         self.series = ()
+
+
+class Ahead:
+    """The one prefetched file, for a label. Not the hour the caller is holding.
+
+    ``series`` is the four prices per symbol. Those rows are not written
+    into a ring. A hole has no series. No candle is invented.
+    """
+
+    def __init__(
+        self,
+        token: str,
+        index: int,
+        series: tuple,
+        *,
+        hole: bool = False,
+        empty: bool = False,
+    ) -> None:
+        self.token = token
+        self.index = index
+        self.series = series
+        self.hole = hole
+        self.empty = empty
 
 
 class Stream:
@@ -115,6 +142,8 @@ class Stream:
         self._hour: Hour | None = None
         self._pending: str | None = None
         self._future: Future | None = None
+        self._ahead_token: str | None = None
+        self._ahead_value: Ahead | None = None
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingress-prefetch")
         self._closed = False
         self._trailed_holdout: str | None = None
@@ -251,6 +280,35 @@ class Stream:
         """The hour ``next`` handed out and ``release`` has not dropped."""
         return self._hour
 
+    def ahead(self) -> Ahead | None:
+        """The one prefetched file, or none when this hold did not start one.
+
+        Does not take the prefetch and does not open the file after it.
+        Prices only: ``feature_vec`` is not read, and the tick rule is not
+        folded. A missing file is a hole with no candles. The same object
+        is returned until the prefetch is taken. ``None`` at the end of the
+        list and when the next token is a holdout.
+        """
+
+        if self._closed:
+            return None
+        future = self._future
+        token = self._pending
+        if future is None or token is None:
+            return None
+        if self._ahead_token == token:
+            return self._ahead_value
+        try:
+            table = future.result()
+        except FileNotFoundError:
+            value = Ahead(token, self._index, (), hole=True)
+        else:
+            series = price_paths(table)
+            value = Ahead(token, self._index, series, empty=int(table.num_rows) == 0)
+        self._ahead_token = token
+        self._ahead_value = value
+        return value
+
     def tick_state(self) -> TickState:
         """Tick sequences after every hour this stream has folded."""
         return self._rule.snapshot()
@@ -280,6 +338,7 @@ class Stream:
         future = self._future
         self._future = None
         self._pending = None
+        self._drop_ahead()
         if future is not None:
             future.cancel()
         if not self._closed:
@@ -304,6 +363,7 @@ class Stream:
             return None
 
     def _take_prefetch(self, token: str):
+        self._drop_ahead()
         future = self._future
         pending = self._pending
         self._future = None
@@ -314,6 +374,10 @@ class Stream:
             future.cancel()
             return None
         return future.result()
+
+    def _drop_ahead(self) -> None:
+        self._ahead_token = None
+        self._ahead_value = None
 
     def _prefetch(self) -> None:
         """Read the single following token, unless it is holdout or absent.

@@ -39,9 +39,14 @@ def _same(left, right):
     assert np.allclose(left.close, right.close, equal_nan=True)
     assert np.allclose(left.ref, right.ref, equal_nan=True)
     assert list(left.label) == list(right.label)
+    if left.window_aux is None or right.window_aux is None:
+        assert left.window_aux is None and right.window_aux is None
+    else:
+        assert left.window_aux.shape == right.window_aux.shape
+        assert np.allclose(left.window_aux, right.window_aux, equal_nan=True)
 
 
-def _resume(hours, tables, state, *, lookback, batch, mark=None, holdout=()):
+def _resume(hours, tables, state, *, lookback, batch, mark=None, holdout=(), aux=None, aux_width=0):
     seen = []
     stream = Stream(
         hours,
@@ -52,7 +57,15 @@ def _resume(hours, tables, state, *, lookback, batch, mark=None, holdout=()):
         last_trade_ms=state.last_trade_ms,
         tick=state.tick,
     )
-    feed = Feed(stream, lookback=lookback, batch=batch, mark=mark, resume=state)
+    feed = Feed(
+        stream,
+        lookback=lookback,
+        batch=batch,
+        mark=mark,
+        resume=state,
+        aux=aux,
+        aux_width=aux_width,
+    )
     return stream, feed, seen
 
 
@@ -338,9 +351,225 @@ def test_the_auxiliary_window_excludes_the_labeled_candle():
     assert np.isnan(batch.window_aux[hole, 3, 0])
 
 
-def test_aux_does_not_resume():
-    caught = raises(FeedError, lambda: Feed(object(), lookback=2, batch=2, aux=lambda candle: None, aux_width=1, resume=object()))
-    assert "resume" in str(caught)
+def test_mark_can_read_the_prefetched_hour_without_writing_the_ring():
+    from orion.ingress.read import frame as frame_mod
+    from orion.ingress.read.frame import hour_frames
+
+    h1_rows = [
+        moving(2, HOUR, 0),
+        moving(2, HOUR, 5),
+        moving(2, HOUR + STEP, 1),
+    ]
+    tables = {
+        "h0": table([moving(2, step * STEP, step) for step in range(4)], lane0="time"),
+        "h1": table(h1_rows, lane0="time"),
+        "h2": table([moving(2, 2 * HOUR + step * STEP, step) for step in range(2)], lane0="time"),
+    }
+    seen_ahead = []
+
+    def mark(candle, ahead=None):
+        assert ahead is candle.ahead()
+        stamp = int(candle.open_time_ms)
+        if stamp < HOUR:
+            assert "h2" not in seen
+            assert seen.count("h1") == 1
+            assert ahead is not None and ahead.token == "h1"
+            assert len(ahead.series) == 1
+            assert ahead.series[0].open_time_ms.tolist() == [HOUR, HOUR + STEP]
+        seen_ahead.append(None if ahead is None else (ahead.token, ahead.hole, len(ahead.series)))
+        if ahead is not None:
+            assert not hasattr(ahead.series[0], "features")
+        return stamp
+
+    calls = {"n": 0}
+    real = frame_mod.decode_feature_vec
+
+    def wrapped(column):
+        calls["n"] += 1
+        return real(column)
+
+    frame_mod.decode_feature_vec = wrapped
+    stream = None
+    try:
+        stream, feed, seen = _feed(("h0", "h1", "h2"), tables, lookback=4, batch=8, mark=mark)
+        batches = _batches(feed)
+        assert calls["n"] == 3
+    finally:
+        frame_mod.decode_feature_vec = real
+        if stream is not None:
+            stream.close()
+    assert ("h1", False, 1) in seen_ahead
+    assert ("h2", False, 1) in seen_ahead
+    assert any(item is None for item in seen_ahead)
+    built, _trades = hour_frames(tables["h1"])
+    assert len(built) == 1
+    assert built[0].open_time_ms.tolist() == [HOUR, HOUR + STEP]
+    kept = (BASE) / 1e8
+    duplicate = (BASE + 5 * 10_000) / 1e8
+    assert built[0].open[0] == kept
+    assert duplicate not in built[0].open.tolist()
+    for batch in batches:
+        for index in range(len(batch)):
+            stamp = int(batch.open_time_ms[index])
+            lane = batch.features[index, :, 0]
+            if stamp < HOUR:
+                assert HOUR not in lane.tolist()
+                assert HOUR + STEP not in lane.tolist()
+            if stamp == HOUR:
+                assert batch.open[index] == kept
+                assert HOUR + STEP not in lane.tolist()
+            assert batch.label[index] == stamp
+    assert seen.count("h1") == 1
+    assert seen.count("h2") == 1
+
+
+def test_a_one_argument_mark_still_receives_one_candle():
+    class Mark:
+        def __init__(self):
+            self.paths = []
+
+        def __call__(self, candle):
+            self.paths.append(candle.ahead())
+            return int(candle.close)
+
+    mark = Mark()
+    tables = {
+        "h0": table([moving(2, step * STEP, step) for step in range(3)], lane0="time"),
+        "h1": table([moving(2, HOUR + step * STEP, step) for step in range(2)], lane0="time"),
+    }
+    stream, feed, seen = _feed(("h0", "h1"), tables, lookback=4, batch=8, mark=mark)
+    try:
+        _batches(feed)
+    finally:
+        stream.close()
+    assert mark.paths
+    assert any(path is not None and path.token == "h1" and path.series for path in mark.paths)
+    assert seen.count("h1") == 1
+
+
+def _aux_books():
+    books = {}
+
+    def aux(candle):
+        hour = int(candle.open_time_ms) // HOUR
+        key = (int(candle.symbol), hour)
+        count = books.get(key, 0)
+        books[key] = count + 1
+        return np.array(
+            [float(candle.open), float(candle.high), float(candle.low), float(candle.close), float(count)],
+            dtype=np.float64,
+        )
+
+    return aux
+
+
+def test_resume_with_aux_rebuilds_the_same_window():
+    start = HOUR - 6 * STEP
+    tables = {
+        "h0": table([moving(2, start + step * STEP, step) for step in range(6)], lane0="time"),
+        "h1": table([moving(2, HOUR + step * STEP, 100 + step) for step in range(6)], lane0="time"),
+    }
+    tokens = ("h0", "h1")
+
+    def mark(candle):
+        return int(candle.open_time_ms)
+
+    full_stream, full_feed, _full_seen = _feed(
+        tokens, tables, lookback=4, batch=2, seed=5, mark=mark, aux=_aux_books(), aux_width=5
+    )
+    full = _batches(full_feed)
+    full_stream.close()
+    stream, feed, _seen = _feed(
+        tokens, tables, lookback=4, batch=2, seed=5, mark=mark, aux=_aux_books(), aux_width=5
+    )
+    taken = []
+    state = None
+    while True:
+        try:
+            taken.append(next(feed))
+        except StopIteration:
+            break
+        point = feed.resume_state()
+        if point.hour == 1 and point.skip > 0:
+            state = point
+            break
+    assert state is not None
+    assert state.rings[2].aux is not None
+    plain_stream, plain_feed, _plain_seen = _feed(tokens, tables, lookback=4, batch=2, seed=5, mark=mark)
+    plain_taken = []
+    plain = None
+    for _batch in taken:
+        plain_taken.append(next(plain_feed))
+        plain = plain_feed.resume_state()
+    assert plain is not None
+    assert plain.hour == state.hour
+    assert plain.skip == state.skip
+    assert plain.taken == state.taken
+    assert plain.seed == state.seed
+    assert plain.rings[2].aux is None
+    assert np.allclose(plain.rings[2].features, state.rings[2].features, equal_nan=True)
+    assert np.array_equal(plain.rings[2].valid, state.rings[2].valid)
+    for left, right in zip(taken, plain_taken):
+        assert np.array_equal(left.symbol, right.symbol)
+        assert np.array_equal(left.open_time_ms, right.open_time_ms)
+        assert np.allclose(left.features, right.features, equal_nan=True)
+        assert np.array_equal(left.valid, right.valid)
+    resumed_stream, resumed, seen = _resume(
+        tokens, tables, state, lookback=4, batch=2, mark=mark, aux=_aux_books(), aux_width=5
+    )
+    resumed_batches = _batches(resumed)
+    assert "h0" not in seen
+    assert resumed_batches
+    for left, right in zip(full[len(taken) :], resumed_batches):
+        _same(left, right)
+    assert len(resumed_batches) == len(full) - len(taken)
+    plain_stream2, plain_resumed, _plain_seen2 = _resume(tokens, tables, plain, lookback=4, batch=2, mark=mark)
+    plain_rest = _batches(plain_resumed)
+    assert [batch.open_time_ms.tolist() for batch in plain_rest] == [batch.open_time_ms.tolist() for batch in resumed_batches]
+    assert [batch.symbol.tolist() for batch in plain_rest] == [batch.symbol.tolist() for batch in resumed_batches]
+    for left, right in zip(plain_rest, resumed_batches):
+        assert np.allclose(left.features, right.features, equal_nan=True)
+        assert np.array_equal(left.valid, right.valid)
+        assert list(left.label) == list(right.label)
+    prior_open = (BASE + 5 * 10_000) / 1e8
+    second_open = (BASE + 101 * 10_000) / 1e8
+    saw_prior = False
+    saw_second = False
+    for batch in resumed_batches:
+        opens = batch.window_aux[:, :, 0]
+        counts = batch.window_aux[:, :, 4]
+        if np.isclose(opens, prior_open, rtol=0, atol=1e-6).any():
+            saw_prior = True
+        hit = np.isclose(opens, second_open, rtol=0, atol=1e-6)
+        if hit.any():
+            assert np.all(counts[hit] == 1.0)
+            saw_second = True
+    assert saw_prior and saw_second
+    full_features, full_valid = full_feed._rings[2].view()
+    resumed_features, resumed_valid = resumed._rings[2].view()
+    assert np.allclose(full_features, resumed_features, equal_nan=True)
+    assert np.array_equal(full_valid, resumed_valid)
+    assert np.allclose(full_feed._rings[2].view_aux(), resumed._rings[2].view_aux(), equal_nan=True)
+    bad = Stream(
+        tokens,
+        reader(tables, []),
+        start=state.hour,
+        excluded=state.tick.stuck,
+        last_trade_ms=state.last_trade_ms,
+        tick=state.tick,
+    )
+    try:
+        caught = raises(
+            FeedError,
+            lambda: Feed(bad, lookback=4, batch=2, aux=lambda candle: np.zeros(1), aux_width=1, resume=state),
+        )
+    finally:
+        bad.close()
+    assert "aux" in str(caught).lower()
+    stream.close()
+    plain_stream.close()
+    resumed_stream.close()
+    plain_stream2.close()
 
 
 def test_collate_keeps_hours_in_order_and_shuffles_inside_the_hour():

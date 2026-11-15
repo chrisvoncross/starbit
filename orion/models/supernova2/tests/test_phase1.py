@@ -239,14 +239,3 @@ def test_a_valid_token_is_not_flattened():
     raw = jnp.zeros((1, width)).at[0, 0].set(1.0)
     assert np.any(np.asarray(centered(norm, raw)) != 0.0)
 
-
-def test_aux_does_not_resume():
-    from orion.ingress.feed.cursor import Feed
-    from orion.ingress.read.stream import FeedError
-
-    try:
-        Feed(object(), lookback=2, batch=2, aux=lambda candle: None, aux_width=1, resume=object())
-    except FeedError as exc:
-        assert "resume" in str(exc)
-        return
-    raise AssertionError("resume with aux was accepted")

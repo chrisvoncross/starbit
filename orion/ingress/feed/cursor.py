@@ -4,8 +4,11 @@ A row is complete when the next stored candle of that symbol is exactly
 one candle later (15000 ms). The input is the ring. Beside it are the
 unscaled open, high, low, and close of that next candle, the close
 of the candle the row is taken at, and the label ``mark`` gave the next
-candle. ``mark`` runs only while the hour is in memory. This
-package does not know the star rule.
+candle. ``mark`` runs only while the hour is in memory. A mark that
+accepts a second argument, or that calls :meth:`Candle.ahead`, may read
+the one prefetched file. Those rows are not written into the ring. No
+further file is opened and no candle is invented. This package does not
+know the star rule.
 
 The last candle of an hour waits for the first candle of the next hour
 only when that candle is exactly one step later. A holdout, a hole, and
@@ -26,11 +29,14 @@ that hour. Permanent exclusions are separate. The shuffle seed and the
 number of batches already taken from the index hour are part of the
 point. The unfinished batch is not stored. On resume the index hour is
 reread and counted once. Rows the step already took are skipped and do
-not move the ring.
+not move the ring. When ``aux`` is set it runs again on the candles of
+that reread hour, so the caller does not keep the auxiliary function's
+memory. The four prices are in the sealed hour.
 """
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 
 import numpy as np
@@ -55,6 +61,17 @@ class Candle:
     low: float
     close: float
     features: np.ndarray
+
+    def ahead(self):
+        """The one prefetched hour, or none.
+
+        The rows there are not this candle. The ring does not receive them.
+        """
+
+        load = getattr(self, "_ahead", None)
+        if load is None:
+            return None
+        return load()
 
 
 @dataclass(frozen=True)
@@ -116,6 +133,24 @@ def _relation(last_time: int | None, waiting: bool, time_ms: int) -> str:
     return "gap"
 
 
+def _accepts_ahead(mark) -> bool:
+    """True when ``mark`` can take the prefetched hour as a second argument."""
+
+    if mark is None:
+        return False
+    try:
+        parameters = tuple(inspect.signature(mark).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    positional = 0
+    for param in parameters:
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            positional += 1
+    return positional >= 2
+
+
 def _missing_bars(last_time: int | None, waiting: bool, time_ms: int) -> int | None:
     """How many unobserved bars sit between two stored candles, or none."""
 
@@ -130,7 +165,7 @@ def _missing_bars(last_time: int | None, waiting: bool, time_ms: int) -> int | N
 class _Walker:
     """Candles of one hour, in time order then symbol order."""
 
-    def __init__(self, hour, rings: dict[int, Ring], origin: dict[int, Seam], skip: int, lookback: int, gaps: list[Gap], mark, log: Log, aux, aux_width: int) -> None:
+    def __init__(self, hour, rings: dict[int, Ring], origin: dict[int, Seam], skip: int, lookback: int, gaps: list[Gap], mark, log: Log, aux, aux_width: int, ahead, pass_ahead: bool) -> None:
         self.hour_index = int(hour.index)
         self.token = hour.token
         self.rings = rings
@@ -139,6 +174,8 @@ class _Walker:
         self.mark = mark
         self.aux = aux
         self.aux_width = int(aux_width)
+        self._ahead = ahead
+        self._pass_ahead = bool(pass_ahead)
         self.log = log
         self.skip = int(skip)
         self.skipped = 0
@@ -152,6 +189,10 @@ class _Walker:
             event = self.events[self.pos]
             self.pos += 1
             if self.skipped < self.skip:
+                # The ring is already past this candle. Replay aux so a fresh
+                # callable sees the rows this hour is reading again.
+                if self.aux is not None:
+                    self._aux_row(self._candle_at(event))
                 if self._shadow(event):
                     self.skipped += 1
                 continue
@@ -174,16 +215,31 @@ class _Walker:
         self.shadow[symbol] = [time, True]
         return emits
 
+    def _candle_at(self, event) -> Candle:
+        series = self.series[int(event["series"])]
+        index = int(event["row"])
+        candle = Candle(
+            symbol=int(event["symbol"]),
+            open_time_ms=int(event["time"]),
+            open=float(series.open[index]),
+            high=float(series.high[index]),
+            low=float(series.low[index]),
+            close=float(series.close[index]),
+            features=series.features[index],
+        )
+        if self._ahead is not None:
+            object.__setattr__(candle, "_ahead", self._ahead)
+        return candle
+
+    def _label(self, held: Candle):
+        if self._pass_ahead:
+            return self.mark(held, held.ahead())
+        return self.mark(held)
+
     def _apply(self, event) -> Row | None:
         symbol = int(event["symbol"])
         time = int(event["time"])
-        series = self.series[int(event["series"])]
-        index = int(event["row"])
-        candle = series.features[index]
-        open_ = float(series.open[index])
-        high = float(series.high[index])
-        low = float(series.low[index])
-        close = float(series.close[index])
+        held = self._candle_at(event)
         ring = self.rings.get(symbol)
         if ring is None:
             ring = Ring(self.lookback, aux=self.aux_width)
@@ -203,40 +259,31 @@ class _Walker:
                 )
                 ring.cover(missing, CANDLE_MS)
                 kind = "next"
-        held = Candle(
-            symbol=symbol,
-            open_time_ms=time,
-            open=open_,
-            high=high,
-            low=low,
-            close=close,
-            features=candle,
-        )
         if kind == "next":
             features, valid = ring.view()
             window_aux = None if ring.aux is None else ring.view_aux()
-            label = None if self.mark is None else self.mark(held)
+            label = None if self.mark is None else self._label(held)
             ref = float(ring.last_close) if ring.last_close is not None else float("nan")
-            ring.push(time, close, candle, self._aux_row(held))
+            ring.push(time, held.close, held.features, self._aux_row(held))
             return Row(
                 hour=int(event["hour"]),
                 symbol=symbol,
                 open_time_ms=time,
                 features=features,
                 valid=valid,
-                open=open_,
-                high=high,
-                low=low,
-                close=close,
+                open=held.open,
+                high=held.high,
+                low=held.low,
+                close=held.close,
                 ref=ref,
                 label=label,
                 window_aux=window_aux,
             )
         extra = self._aux_row(held)
         if kind == "start":
-            ring.push(time, close, candle, extra)
+            ring.push(time, held.close, held.features, extra)
         else:
-            ring.restart(time, close, candle, extra)
+            ring.restart(time, held.close, held.features, extra)
         return None
 
     def _aux_row(self, candle: Candle) -> np.ndarray | None:
@@ -304,8 +351,6 @@ class Feed:
             raise FeedError(f"batch must be a positive int, got {batch!r}")
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise FeedError(f"seed must be an int, got {seed!r}")
-        if resume is not None and aux is not None:
-            raise FeedError("aux does not resume")
         self._stream = stream
         self._aux = aux
         self._aux_width = int(aux_width)
@@ -313,6 +358,7 @@ class Feed:
         self._lookback = lookback
         self._batch = batch
         self._mark = mark
+        self._pass_ahead = _accepts_ahead(mark)
         self._rings: dict[int, Ring] = {}
         self._walker: _Walker | None = None
         self._held = False
@@ -333,11 +379,7 @@ class Feed:
             self._check_resume(resume)
             self._seed = int(resume.seed)
             for symbol, snap in resume.rings.items():
-                if snap.features.shape != (lookback, FEATURE_DIM):
-                    raise FeedError("resume ring does not match lookback")
-                ring = Ring(lookback)
-                ring.restore(snap)
-                self._rings[int(symbol)] = ring
+                self._rings[int(symbol)] = self._ring_from(snap)
             self._resume_pending = True
             self._resume_skip = int(resume.skip)
             self._resume_taken = int(resume.taken)
@@ -459,6 +501,8 @@ class Feed:
             self._log,
             self._aux,
             self._aux_width,
+            self._stream.ahead,
+            self._pass_ahead,
         )
 
     def _drop_absent(self, hour) -> None:
@@ -534,6 +578,19 @@ class Feed:
             taken=0,
             skip=0,
         )
+
+    def _ring_from(self, snap: RingSnapshot) -> Ring:
+        if snap.features.shape != (self._lookback, FEATURE_DIM):
+            raise FeedError("resume ring does not match lookback")
+        width = self._aux_width
+        if width < 1:
+            if snap.aux is not None:
+                raise FeedError("resume ring has auxiliary rows and this ring does not")
+        elif snap.aux is None or tuple(snap.aux.shape) != (self._lookback, width):
+            raise FeedError("resume auxiliary rows do not match this ring")
+        ring = Ring(self._lookback, aux=width)
+        ring.restore(snap)
+        return ring
 
     def _check_resume(self, resume: Resume) -> None:
         if self._stream.next_index != int(resume.hour):

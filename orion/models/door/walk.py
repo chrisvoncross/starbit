@@ -90,7 +90,11 @@ def feature_scales(days: tuple[str, ...], fit: Callable, *, on_series: Callable 
 
 
 class Walk:
-    """The one ingress pass. ``resume_state`` is the batch the step has not taken."""
+    """The one ingress pass. ``resume_state`` is the batch the step has not taken.
+
+    ``aux`` may be set together with ``resume``. The auxiliary function runs
+    again on the hour that is read again. The caller does not keep its memory.
+    """
 
     def __init__(
         self,
@@ -126,8 +130,6 @@ class Walk:
             start = 0 if self._start is None else self._start
             excluded = () if self._excluded is None else self._excluded
             return start, excluded, None, None
-        if self._aux is not None:
-            raise FeedError("aux does not resume")
         hour = int(self._resume.hour)
         stuck = tuple(int(symbol) for symbol in self._resume.tick.stuck)
         if self._start is not None and self._start != hour:

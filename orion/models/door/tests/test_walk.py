@@ -161,3 +161,88 @@ def test_walk_resume_uses_the_saved_stream_position():
         assert "start" in str(exc)
     else:
         raise AssertionError("a different start was accepted")
+
+
+def test_walk_resume_with_aux_rebuilds_the_same_window():
+    hour = 3_600_000
+    start = hour - 6 * STEP
+    tables = {
+        "h0": table([moving(2, start + step * STEP, step) for step in range(6)]),
+        "h1": table([moving(2, hour + step * STEP, 100 + step) for step in range(6)]),
+    }
+
+    def read(token):
+        return tables[token]
+
+    def bind(stream):
+        def mark(candle):
+            assert stream.held is not None
+            return int(candle.open_time_ms)
+
+        return mark
+
+    def aux():
+        books = {}
+
+        def row(candle):
+            clock = int(candle.open_time_ms) // hour
+            key = (int(candle.symbol), clock)
+            count = books.get(key, 0)
+            books[key] = count + 1
+            return np.array(
+                [float(candle.open), float(candle.high), float(candle.low), float(candle.close), float(count)],
+                dtype=np.float64,
+            )
+
+        row.width = 5
+        return row
+
+    tokens = ("h0", "h1")
+    with Walk(tokens, lookback=4, batch=2, bind=bind, seed=5, read=read, aux=aux) as walk:
+        full = list(walk)
+    with Walk(tokens, lookback=4, batch=2, bind=bind, seed=5, read=read, aux=aux) as walk:
+        taken = []
+        state = None
+        for batch in walk:
+            point = walk.resume_state()
+            taken.append(batch)
+            if point.hour == 1 and point.skip > 0:
+                state = point
+                break
+    assert state is not None
+    with Walk(tokens, lookback=4, batch=2, bind=bind, seed=5, read=read, aux=aux, resume=state) as walk:
+        rest = list(walk)
+    assert rest
+    assert len(rest) == len(full) - len(taken)
+    for left, right in zip(full[len(taken) :], rest):
+        assert np.array_equal(left.symbol, right.symbol)
+        assert np.array_equal(left.open_time_ms, right.open_time_ms)
+        assert np.array_equal(left.valid, right.valid)
+        assert np.allclose(left.features, right.features, equal_nan=True)
+        assert list(left.label) == list(right.label)
+        assert np.allclose(left.window_aux, right.window_aux, equal_nan=True)
+    prior_open = (BASE + 5 * 10_000) / 1e8
+    second_open = (BASE + 101 * 10_000) / 1e8
+    saw_prior = False
+    saw_second = False
+    for batch in rest:
+        opens = batch.window_aux[:, :, 0]
+        counts = batch.window_aux[:, :, 4]
+        if np.isclose(opens, prior_open, rtol=0, atol=1e-6).any():
+            saw_prior = True
+        hit = np.isclose(opens, second_open, rtol=0, atol=1e-6)
+        if hit.any():
+            assert np.all(counts[hit] == 1.0)
+            saw_second = True
+    assert saw_prior and saw_second
+    with Walk(tokens, lookback=4, batch=2, bind=bind, seed=5, read=read) as walk:
+        plain_state = None
+        batches = iter(walk)
+        for _batch in taken:
+            next(batches)
+            plain_state = walk.resume_state()
+    assert plain_state.hour == state.hour
+    assert plain_state.skip == state.skip
+    with Walk(tokens, lookback=4, batch=2, bind=bind, seed=5, read=read, resume=plain_state) as walk:
+        plain_rest = list(walk)
+    assert [batch.open_time_ms.tolist() for batch in plain_rest] == [batch.open_time_ms.tolist() for batch in rest]

@@ -63,6 +63,88 @@ def test_one_prefetch_only():
         stream.release()
 
 
+def test_ahead_is_the_one_prefetched_file():
+    from orion.ingress.read.frame import hour_frames
+
+    tokens = ("h0", "h1", "h2")
+    tables = {token: _quiet(index) for index, token in enumerate(tokens)}
+    seen = []
+    with Stream(tokens, reader(tables, seen)) as stream:
+        hour = next(stream)
+        assert 9 in hour.excluded
+        ahead = stream.ahead()
+        assert ahead is stream.ahead()
+        assert ahead.token == "h1"
+        assert ahead.hole is False
+        assert not hasattr(ahead.series[0], "features")
+        assert {item.symbol for item in ahead.series} == {9, 2}
+        assert stream.held is hour
+        assert stream._pending == "h1"
+        assert stream._future is not None
+        assert seen == ["h0", "h1"]
+        built, _trades = hour_frames(tables["h1"])
+        paths = {item.symbol: item for item in ahead.series}
+        frames = {item.symbol: item for item in built}
+        assert set(paths) == set(frames)
+        assert np.array_equal(paths[2].open_time_ms, frames[2].open_time_ms)
+        assert np.allclose(paths[2].high, frames[2].high)
+        assert np.allclose(paths[9].low, frames[9].low)
+        stream.release()
+        delivered = next(stream)
+        assert delivered.token == "h1"
+        assert 9 not in {item.symbol for item in delivered.series}
+        wait(stream)
+        assert seen.count("h1") == 1
+        assert seen.count("h2") == 1
+        assert seen[0] == "h0"
+
+    seen.clear()
+    with Stream(("h0", "hold", "h1"), reader(tables, seen), holdout={"hold"}) as stream:
+        next(stream)
+        wait(stream)
+        assert stream.ahead() is None
+        assert seen == ["h0"]
+
+    seen.clear()
+
+    def missing(token):
+        seen.append(token)
+        if token == "missing":
+            raise FileNotFoundError(token)
+        return tables[token]
+
+    with Stream(("h0", "missing", "h2"), missing) as stream:
+        next(stream)
+        ahead = stream.ahead()
+        assert ahead.hole is True
+        assert ahead.series == ()
+        assert ahead.empty is False
+        assert seen.count("missing") == 1
+        stream.release()
+        hole = next(stream)
+        assert hole.hole is True
+        assert hole.series == ()
+        assert seen.count("missing") == 1
+
+    seen.clear()
+    with Stream(("only",), reader({"only": _quiet(0)}, seen)) as stream:
+        next(stream)
+        assert stream.ahead() is None
+        assert seen == ["only"]
+
+    empty = []
+    with Stream(("h0", "blank"), reader({"h0": _quiet(0), "blank": table([])}, empty)) as stream:
+        next(stream)
+        ahead = stream.ahead()
+        assert ahead.empty is True
+        assert ahead.hole is False
+        assert ahead.series == ()
+        assert empty.count("blank") == 1
+        stream.release()
+        assert next(stream).empty is True
+        assert empty.count("blank") == 1
+
+
 def test_holdout_is_never_read_and_blocks_the_prefetch_behind_it():
     tables = {"h0": _quiet(0), "h1": _quiet(1), "h2": _quiet(2)}
     seen = []

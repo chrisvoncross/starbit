@@ -5,6 +5,7 @@ A missing 15s step stays a hole in ``open_time_ms``. Nothing is invented.
 A duplicate timestamp in the hour keeps the earlier row. Hours are not
 stacked here. A 204-wide ``feature_vec`` grows to 216 on this hour, per
 symbol, in time order. A vector that is already 216 wide passes through.
+``price_paths`` reads the four prices only and does not read ``feature_vec``.
 """
 
 from __future__ import annotations
@@ -200,6 +201,66 @@ def hour_frames(
     series = tuple(item for item, _trade in built)
     last_trade = {item.symbol: trade for item, trade in built if trade is not None}
     return series, last_trade
+
+
+@dataclasses.dataclass(frozen=True)
+class Prices:
+    """Open, high, low, and close of one symbol. ``feature_vec`` is not here."""
+
+    symbol: int
+    open_time_ms: np.ndarray
+    open: np.ndarray
+    high: np.ndarray
+    low: np.ndarray
+    close: np.ndarray
+
+    def __len__(self) -> int:
+        return int(self.open_time_ms.shape[0])
+
+
+def price_paths(table: pa.Table) -> tuple[Prices, ...]:
+    """The four prices per symbol, in time order.
+
+    The earlier row of a repeated timestamp stays. No candle is invented.
+    ``feature_vec`` is not read. An empty table has no paths.
+    """
+
+    names = set(table.schema.names)
+    required = ("symbol", "open_time_ms", "open_fp", "high_fp", "low_fp", "close_fp")
+    missing = [name for name in required if name not in names]
+    if missing:
+        raise HourError(f"hour is missing columns: {missing}")
+    if table.num_rows == 0:
+        return ()
+    try:
+        symbols = ints(table.column("symbol"), "symbol")
+        times = ints(table.column("open_time_ms"), "open_time_ms")
+        prices = {
+            name: numbers(table.column(name), name, fixed=True)
+            for name in ("open_fp", "high_fp", "low_fp", "close_fp")
+        }
+    except DecodeError as exc:
+        raise HourError(str(exc)) from exc
+    if symbols.shape[0] == 0:
+        return ()
+    order = _order(symbols, times)
+    sorted_symbols = symbols[order]
+    sorted_times = times[order]
+    built: list[Prices] = []
+    for start, stop in _groups(sorted_symbols):
+        keep = _earlier(sorted_times[start:stop])
+        rows = order[start:stop][keep]
+        built.append(
+            Prices(
+                symbol=int(sorted_symbols[start]),
+                open_time_ms=np.ascontiguousarray(times[rows], dtype=np.int64),
+                open=_taken(prices["open_fp"], rows),
+                high=_taken(prices["high_fp"], rows),
+                low=_taken(prices["low_fp"], rows),
+                close=_taken(prices["close_fp"], rows),
+            )
+        )
+    return tuple(built)
 
 
 def expand_features(
