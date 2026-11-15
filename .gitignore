@@ -6,6 +6,7 @@ mainmexckey.py
 orion/runs/**/ingress.jsonl
 orion/runs/**/events.jsonl
 orion/runs/**/*.jsonl
+orion/models/nova/docs/runs/
 orion/runs/**/*.log
 orion/runs/**/*.pid
 orion/runs/**/ckpt/**
