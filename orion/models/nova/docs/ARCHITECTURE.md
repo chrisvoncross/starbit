@@ -1,10 +1,10 @@
-# Welt
+# Nova
 
-Festgehalten am 2026-11-15, gelöst von der Phasenreihe. Kein Lauf. Keine der unten genannten Dateien wird mit dieser Note angelegt. Die Prüfungstage bleiben zu.
+Festgehalten am 2026-11-15, gelöst von der Phasenreihe. Die Prüfungstage bleiben zu. Ein Lauf öffnet eine Stunde erst, wenn das Manifest geschrieben ist.
 
-Dieses Modell ist ein eigener Baum. Es importiert kein Netz, keinen Verlust und keinen Checkpoint aus `supernova`, `supernova2`, `arcus`, `vega`, `ledger` oder `buchband`. Die Stunden kommen durch `orion/models/door`. Door liest `orion/ingress`. Formel, Beschriftung, Netz und Stand bleiben im Modell. So ist Door gebaut: ein neues Modell bringt seine Formel und seine Beschriftung mit.
+Nova ist das Weltmodell. Es importiert kein Netz, keinen Verlust und keinen Checkpoint aus `supernova`, `supernova2`, `arcus`, `vega`, `ledger` oder `buchband`. Die Stunden kommen durch `orion/models/door`. Door liest `orion/ingress`. Formel, Beschriftung, Netz und Stand bleiben in Nova.
 
-Der Code liegt unter `orion/models/welt/`. Er liegt nicht unter `orion/models/nova/`. Der laufende Phase-1-Baum importiert `orion.models.nova`. Diese Note lässt diesen Import in Ruhe.
+Der Code liegt unter `orion/models/nova/`. `supernova2` importiert denselben Paketnamen aus der Zeit, als hier die Phasenreihe lag. Diese Dateien sind Nova. Sie stellen die Phasenreihe nicht wieder her.
 
 Die Aufgabe bleibt das Zielbild in `orion/models/nova/docs/zielbild.md`. Die Suche nach Hoch, Tief oder noch nicht steht als eigene Funktion in diesem Baum. Door bekommt sie nur als aufrufbare Beschriftung.
 
@@ -67,7 +67,7 @@ Die Kernel-Ridge-Auslese der Studie läuft nach dem Lauf auf dem Host, an einem 
 
 Jeder Satz dieser Sektion und der Läufe trägt eine Marke. [Studie] heißt: veröffentlicht, in Mohl et al., arXiv:2610.28753, oder im Mamba-3-Text, arXiv:2603.15569. [Stunde] heißt: so steht es in der versiegelten Stunde, im Code von Door oder Ingress, oder in einer Messnotiz unter `orion/docs/learnings/`, mit Quelle im Satz. [Wahl] heißt: diese Note legt es fest. Eine Wahl ist keine Messung. Kein Satz hier stützt sich auf die Sektion „Annahmen“.
 
-[Wahl] Der Code liegt unter `orion/models/welt/`. [Wahl] Die Dateinamen legt der Auftrag des ersten Laufs fest, nicht diese Note.
+[Wahl] Der Code liegt unter `orion/models/nova/`. [Wahl] Die Dateinamen stehen in der Tabelle „Module“.
 
 ### Der Schritt
 
@@ -133,7 +133,7 @@ Jeder Satz dieser Sektion und der Läufe trägt eine Marke. [Studie] heißt: ver
 
 ### Die Entscheidung
 
-[Wahl] Die Beschriftung ist die Suche des Zielbilds mit einem Tick als kleinster Stufe. [Wahl] Sie ist eine eigene Funktion in `orion/models/welt/` und geht als `mark` an Door. [Stunde] `mark` sieht die Kerze, solange die Stunde gehalten ist. [Wahl] Den Rest dieser Stunde liest es aus der gehaltenen Stunde. [Stunde] Nimmt `mark` eine zweite Stelle an, bekommt es einen Aufruf. Der Aufruf wartet auf die eine folgende Datei. [Wahl] Die Beschriftung ruft ihn erst, wenn der Pfad die gehaltene Stunde verlässt. Bis dahin läuft das Holen neben dem Schritt. [Stunde] Sichtbar sind dort die vier Preise. `feature_vec` wird dafür nicht gelesen. Diese Reihen gehen nicht in die Merkmale und nicht in den Ring. [Stunde] Die Datei ist der nächste Name in der Liste des Aufrufers. [Wahl] Die Suche zählt sie nur, wenn ihre erste Kerze genau eine Kerze nach der letzten Kerze der gehaltenen Stunde liegt. Sonst trägt sie nichts bei. [Wahl] Die Suche endet an der letzten Kerze dieser einen anschließenden Datei. Eine weitere Datei wird nicht geholt. Ein Stern dahinter ist abgeschnitten und wird nicht als fertiger Stern beschriftet. [Stunde] `mark_hour` in `orion/models/arcus/labels.py` schneidet an der Stunde und benutzt den Vorgriff nicht. [Studie] Mohl et al. legen diese Beschriftung nicht fest.
+[Wahl] Die Beschriftung ist die Suche des Zielbilds mit einem Tick als kleinster Stufe. [Wahl] Sie ist eine eigene Funktion in `orion/models/nova/` und geht als `mark` an Door. [Stunde] `mark` sieht die Kerze, solange die Stunde gehalten ist. [Wahl] Den Rest dieser Stunde liest es aus der gehaltenen Stunde. [Stunde] Nimmt `mark` eine zweite Stelle an, bekommt es einen Aufruf. Der Aufruf wartet auf die eine folgende Datei. [Wahl] Die Beschriftung ruft ihn erst, wenn der Pfad die gehaltene Stunde verlässt. Bis dahin läuft das Holen neben dem Schritt. [Stunde] Sichtbar sind dort die vier Preise. `feature_vec` wird dafür nicht gelesen. Diese Reihen gehen nicht in die Merkmale und nicht in den Ring. [Stunde] Die Datei ist der nächste Name in der Liste des Aufrufers. [Wahl] Die Suche zählt sie nur, wenn ihre erste Kerze genau eine Kerze nach der letzten Kerze der gehaltenen Stunde liegt. Sonst trägt sie nichts bei. [Wahl] Die Suche endet an der letzten Kerze dieser einen anschließenden Datei. Eine weitere Datei wird nicht geholt. Ein Stern dahinter ist abgeschnitten und wird nicht als fertiger Stern beschriftet. [Stunde] `mark_hour` in `orion/models/arcus/labels.py` schneidet an der Stunde und benutzt den Vorgriff nicht. [Studie] Mohl et al. legen diese Beschriftung nicht fest.
 
 [Wahl] Der erste Kopf gibt drei Logits: oben, unten, noch nicht. [Wahl] Der Verlust ist eine Kreuzentropie. [Wahl] Ein Lauf hat einen Verlust. Seite und Stufe werden nicht im selben Lauf gelernt.
 
@@ -165,7 +165,7 @@ Geschlossen, durch die genannte Quelle:
 
 Offen:
 
-- [Stunde] Die Suche des Sterns ist noch nicht die Funktion in `orion/models/welt/`. `mark_hour` schneidet an der Stunde. [Wahl] Der Vorgriff zählt eine anschließende Datei, der Aufruf kommt erst am Stundenrand, der Schnitt liegt an deren Ende. [Studie] Mohl et al. legen dazu nichts fest. [Wahl] Die Note wird zusätzlich ohne die letzten 20 Kerzen jeder Stunde berichtet. Das meldet den Schnitt und hebt ihn nicht auf.
+- [Stunde] Die Suche des Sterns ist `label.py`. `mark_hour` schneidet weiter an der Stunde und wird nicht gerufen. [Wahl] Der Vorgriff zählt eine anschließende Datei, der Aufruf kommt erst am Stundenrand, der Schnitt liegt an deren Ende. [Studie] Mohl et al. legen dazu nichts fest. [Wahl] Die Note wird zusätzlich ohne die letzten 20 Kerzen jeder Stunde berichtet. Das meldet den Schnitt und hebt ihn nicht auf.
 - [Stunde] `vwap`. `lanes.py` nennt die Spalte und definiert das Mittel nicht. Keine Funktion in diesem Repo rechnet, welche Trades eingehen. Die Formel liegt außerhalb dieses Baums. [Studie] Die Studie bestimmt sie nicht. [Wahl] `vwap` wird nicht als Preis in Ticks benutzt, bis eine Definition vorliegt.
 - [Stunde] Einteilung nach Namen. `lanes.py` ist die einzige Quelle hier. [Studie] Mohl et al. bestimmen die Einteilung nicht. [Wahl] Mehrdeutige Namen bleiben als offen markiert.
 - [Stunde] Löcher über Stunden. Drei Stunden sind geöffnet. `abdi_ranaldo_spread` ist in allen drei zu rund der Hälfte leer, `time_since_last_trade` in einer Zeile je Stunde, die Stunden einzeln geöffnet. Die Löcher in `liq_*`, `position_*` und `long_short_open_ratio` stehen nur in `2026-10-07T00`. Über diese drei Stunden hinaus ist nichts gemessen. [Studie] Die Studie bestimmt das nicht.
@@ -184,6 +184,36 @@ Offen:
 7. [Wahl] Studienform, dieselbe Schnittstelle, erst wenn die kleine Form eine Note hält. Sie ist ein Größenlauf, kein anderes Modell.
 
 [Wahl] Eine Deal-Spur, sobald Ingress sie ausliefert, wäre die Eingabe, die der Studie am nächsten liegt. [Wahl] Bis dahin gibt es diese Ersetzung nicht.
+
+## Module
+
+[Wahl] Wurzel `orion/models/nova/`. [Wahl] Jede Zeile ist eine Wahl. Keine ist eine Messung. [Wahl] Die Liste nennt Dateien. Die Maschine steht oben. Die Annahme weiter unten gilt dieser Liste, nicht dem Abschnitt „Die Maschine“. [Wahl] Ein Lauf öffnet keine Stunde, bevor das Manifest da ist.
+
+| Modul | Tut |
+| --- | --- |
+| `spec.py` | Kleine Form und Studienform, Tick, drei Antworten. Das Manifest wählt die Form, bevor die erste Stunde aufgeht. |
+| `label.py` | Suche des Zielbilds mit einem Tick. Den Rest der gehaltenen Stunde liest sie aus der Stunde, die Door hält. Der Vorgriff ist ein Aufruf und wird erst gerufen, wenn der Pfad diese Stunde verlässt. Die Datei zählt nur, wenn sie zeitlich anschließt. Die Suche endet an deren letzter Kerze. `mark_hour` wird nicht gerufen. |
+| `data/walk.py` | Eine `Walk` aus Door. Bindet die Beschriftung und die vier Preise der geschlossenen Kerzen als `aux`. Öffnet den See nicht. Die Lesestelle aus dem Checkpoint geht als `resume` an Door zurück. |
+| `data/batch.py` | Nimmt den Batch, den Door schon baut. In den Zustand gehen die 216 Spuren und die vier Preise aus `window_aux`. Eine leere Zelle wird 0, daneben ein Maskenbit. Open, High, Low, Close der Zeile und `ref` bleiben die Antwort und gehen nicht in den Zustand. |
+| `data/scale.py` | Eine Skala je Spur über `feature_scales` auf den Übungstagen. Die Formel gehört dem Modell. Door gibt sie nicht vor. |
+| `memory.py` | Je Symbol der Zustand, das vorige B, das vorige x und der Drehwinkel, geordnet nach der Kerzenzeit. Null nur am Strombeginn, bei `restart` des Rings und bei einer neuen Reihe. |
+| `net/scan.py` | Die Trapez-Rekurrenz in JAX, wie unter „Das Gedächtnis“ geschrieben. Die vier Teile bleiben getrennt. Kein Conv1d. |
+| `net/block.py` | Eine Schicht. Die Eingangsprojektion teilt sich in Tor, Wert, B, C, dt, A, Trapez-Tor und Drehwinkel. Sie liefert den Residualstrom und den Zustand. |
+| `net/read.py` | Am Schluss der Zustand jeder Schicht über einen gelernten Lesevektor. Der Residualstrom der letzten Stelle bleibt daneben, für den Vergleichslauf. |
+| `net/head.py` | Drei Logits aus dem Zustand am Schluss. |
+| `net/next.py` | Die nächste Kerze an jeder Stelle des Fensters, als Kategorien. Das ist der Kopf von Lauf 3. `net/head.py` liest nur den Schluss. |
+| `net/level.py` | Späterer Lauf. Auf der genannten Seite das Hoch oder das Tief der nächsten Kerze in Ticks zu `ref`. Nicht Teil des ersten Laufs. |
+| `net/model.py` | Stapelt Einbettung, Schichten, Lesen, die drei Logits, die nächste Kerze und den Stufenkopf. Der Zustand, den die nächste Zeile braucht, ist der nach der ältesten Kerze des Fensters. |
+| `loss.py` | Ein Lauf, ein Verlust. Entweder die drei Antworten oder die nächste Kerze als Kategorien. Nicht beides in einem Schritt. |
+| `probe.py` | Nach dem Lauf, auf dem Host, am eingefrorenen Stand. Gedächtnisproben gegen das lineare Auslesen derselben Spuren und gegen den Zwilling. |
+| `note.py` | Die ungesehene Note der drei Antworten, die `best` schreibt. Dieselbe Note ohne die letzten Kerzen jeder Stunde. Der Vergleich von Lauf 1 mit dem linearen Auslesen derselben Spuren. |
+| `steer.py` | Eine Richtung im Zustand. Gemessen wird die Verschiebung der drei Logits. Dreißig normgleiche Achsen aus vertauschten Beschriftungen. Legt keine Order. |
+| `ckpt.py` | Eine Datei. Sie hält die Gewichte, das Gedächtnis je Symbol und die Lesestelle von Door. Door bekommt beim Weiterlauf nur die Lesestelle. |
+| `step.py` | Eine kompilierte Funktion je Lauf. |
+| `log.py` | Eine Zeile je Tatsache: Lauf, Schritt, Verlust, Checkpoint, abgeschnittene Beschriftung. Ohne Pfad bleibt es im Speicher. |
+| `run.py` | Das Manifest zuerst, dann die Stunden über Door. |
+
+[Wahl] `speed/` wird nicht angelegt, bis eine gemessene Spur zeigt, dass der Scan auf den Schritt wartet. [Wahl] `data/deals.py` gibt es nicht. Door liefert die Trade-Liste nicht. [Wahl] Grain steht im Extra und ist kein zweiter Strom. Door ist der Strom.
 
 ## Annahmen
 
@@ -231,4 +261,6 @@ Abgenommen, nach der Überarbeitung. Der Stufenkopf sagt das Hoch oder das Tief 
 
 Abgenommen als Quellen, nicht als Befunde der Studie. β und γ stehen in Proposition 1 von Lahoti et al. Die Gleichungsnummern unterscheiden sich zwischen der HTML-Fassung und der ICLR-PDF. Die Note zitiert die Proposition, nicht eine Nummer. `headdim` 64 und `d_state` 128 stehen im offiziellen `mamba3.py`, nicht im Studientext. Der Bibliotheks-Tag v2.3.2 ist die Bibliothek. Die Architektur ist Mamba-3. Die Trade-Liste ist in diesem Baum nicht geliefert. float32 der Buchpreise ist ein Speicherhinweis.
 
-Offen, und die Studie schließt es nicht. Der Stunden-Schnitt der Beschriftung. Die Formel von `vwap`. Die Rechnung hinter den Namen in `lanes.py`. Drei Stunden sind keine Verteilung der Löcher. `abdi_ranaldo_spread` ist in allen drei zur Hälfte leer. Auf BTC-Kerzen ist von der Studie nichts gemessen. Die Feldnamen `ssm_state`, `k_state`, `v_state`, `angle_dt_state` sind hier nicht gegen den Quelltext gehalten. Die vier Teile, Zustand, voriges B, voriges x und Drehwinkel, folgen aus Proposition 1 und Proposition 4.
+Zurückgenommen. Die Beschriftung ist nicht mehr der Stunden-Schnitt von `mark_hour`. `label.py` ist die Suche des Zielbilds. Der Vorgriff ist die eine anschließende Datei und wird erst gerufen, wenn der Pfad die gehaltene Stunde verlässt.
+
+Offen, und die Studie schließt es nicht. Die Formel von `vwap`. Die Rechnung hinter den Namen in `lanes.py`. Drei Stunden sind keine Verteilung der Löcher. `abdi_ranaldo_spread` ist in allen drei zur Hälfte leer. Auf BTC-Kerzen ist von der Studie nichts gemessen. Die Feldnamen `ssm_state`, `k_state`, `v_state`, `angle_dt_state` sind hier nicht gegen den Quelltext gehalten. Die vier Teile, Zustand, voriges B, voriges x und Drehwinkel, folgen aus Proposition 1 und Proposition 4. Der Code unter `orion/models/nova/` ist diese Maschine, untrainiert. Er schlägt die Studie nicht.
