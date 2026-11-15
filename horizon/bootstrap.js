@@ -33,6 +33,6 @@ async function resolveMode() {
     if (mode === 'transformer_view') {
         await import('./transformer_view.js');
     } else {
-        await import('./chart_realtime.js?v=truezero1');
+        await import('./chart_realtime.js?v=truezero3');
     }
 })();

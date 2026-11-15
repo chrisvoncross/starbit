@@ -12,7 +12,7 @@
  *   - Additional groups can be added later if needed
  */
 
-import { DEFAULT_GROUP_REGISTRY, DEFAULT_INDICATOR_REGISTRY } from './indicator_registry.js?v=truezero1';
+import { DEFAULT_GROUP_REGISTRY, DEFAULT_INDICATOR_REGISTRY } from './indicator_registry.js?v=truezero3';
 
 // ============================================================================
 // INDICATOR REGISTRY — Single Source of Truth for all chart indicators

@@ -2,7 +2,7 @@
 // Fee is 0. A ride counts when the exit prints strictly beyond the entry.
 // The smallest such step on the contract is one tick. No extra height is required.
 
-import { paintCashOverlay } from '../nordstern/nordstern.js?v=truezero1';
+import { paintCashOverlay } from '../nordstern/nordstern.js?v=truezero3';
 
 export function paintTrueZero({
     chart,
@@ -12,6 +12,7 @@ export function paintTrueZero({
     showStars = true,
     showPositions = true,
     showTable = true,
+    showLine = true,
 }) {
     paintCashOverlay('true_zero', {
         chart,
@@ -21,6 +22,8 @@ export function paintTrueZero({
         showStars,
         showPositions,
         showTable,
+        showLine,
+        lineColor: '#ef5350',
         feeRate: 0,
         minMove: 0,
         title: 'True Zero',

@@ -114,6 +114,7 @@ export const DEFAULT_INDICATOR_REGISTRY = {
         features: {
             sterne: { name: 'Sterne und Kerzen', color: '#3ddc6a', visible: true },
             positionen: { name: 'Positionen', color: '#3ddc6a', visible: true },
+            linie: { name: 'Linie', color: '#ef5350', visible: true },
             tabelle: { name: 'Tabelle', color: '#e8e8e8', visible: true },
         },
     },

@@ -3,7 +3,7 @@ import { setupKyleSignals } from '../indicators/kyle_algo/kyle.js';
 import { createZScorePane, updateZScoreData } from '../indicators/zscore/zscore.js';
 import { createStochObvPane, updateStochObv } from '../indicators/stoch_slow/stoch_slow.js';
 import { paneManager } from '../indicators/pane_manager.js';
-import { createIndicatorPanel, registerIndicator, isIndicatorVisible, isFeatureVisible } from '../indicators/indicator_panel.js?v=truezero1';
+import { createIndicatorPanel, registerIndicator, isIndicatorVisible, isFeatureVisible } from '../indicators/indicator_panel.js?v=truezero3';
 import { paintSwingTurns } from '../indicators/turns/turns.js';
 import { paintAtrZigZag } from '../indicators/atr_zigzag/atr_zigzag.js';
 import { loadLuma, paintLuma } from '../indicators/luma/luma.js?v=luma099';
@@ -11,7 +11,7 @@ import { loadStarbit, paintStarbit } from '../indicators/starbit/starbit.js?v=st
 import { loadLumaTrain, paintLumaTrain } from '../indicators/luma_train/luma_train.js?v=lageseq';
 import { paintNordstern } from '../indicators/nordstern/nordstern.js?v=zerofees6';
 import { paintZeroFees } from '../indicators/zero_fees/zero_fees.js?v=zerofees6';
-import { paintTrueZero } from '../indicators/true_zero/true_zero.js?v=truezero1';
+import { paintTrueZero } from '../indicators/true_zero/true_zero.js?v=truezero3';
 import { paintEntropie } from '../indicators/entropie/entropie.js';
 import { paintEntropiev2 } from '../indicators/entropiev2/entropiev2.js';
 import { paintArcus } from '../indicators/arcus/arcus.js';
@@ -372,6 +372,7 @@ export class RealtimeController {
             registerIndicator('true_zero', {}, () => this.paintTrueZero(), {
                 sterne: () => this.paintTrueZero(),
                 positionen: () => this.paintTrueZero(),
+                linie: () => this.paintTrueZero(),
                 tabelle: () => this.paintTrueZero(),
             });
 
@@ -496,6 +497,7 @@ export class RealtimeController {
             showStars: isFeatureVisible('true_zero', 'sterne'),
             showPositions: isFeatureVisible('true_zero', 'positionen'),
             showTable: isFeatureVisible('true_zero', 'tabelle'),
+            showLine: isFeatureVisible('true_zero', 'linie'),
         });
     }
 

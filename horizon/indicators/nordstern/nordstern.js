@@ -364,6 +364,23 @@ export function paintIdealBook(ctx, options) {
             paintTag(ctx, (ax + bx) / 2, (ay + by) / 2, `${name} ${money(trade.net)}`, exitColor);
         }
     }
+    if (options.line) {
+        ctx.beginPath();
+        ctx.strokeStyle = options.lineColor || '#ffe14a';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        for (const trade of trades) {
+            const ax = timeScale.timeToCoordinate(trade.entryTime);
+            const ay = series.priceToCoordinate(trade.entryPrice);
+            const bx = timeScale.timeToCoordinate(trade.exitTime);
+            const by = series.priceToCoordinate(trade.exitPrice);
+            if (ax == null || ay == null || bx == null || by == null) continue;
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+        }
+        ctx.stroke();
+    }
     if (!options.table) return;
     const floor = trades[0] ? trades[0].floor : 0;
     const total = trades.reduce((sum, trade) => sum + (Number(trade.net) || 0), 0);
@@ -419,6 +436,8 @@ class NordsternRenderer {
         this._positions = positions;
         this._table = table;
         const look = style || {};
+        this._line = Boolean(look.line);
+        this._lineColor = look.lineColor || '#ffe14a';
         this._title = look.title || 'Nordstern';
         this._feeLine = look.feeLine || '0,05 % rein + 0,05 % raus = 0,10 % gesamt';
         this._anchor = look.anchor || 'right';
@@ -443,6 +462,8 @@ class NordsternRenderer {
                 viewWidth: scope.mediaSize.width,
                 viewHeight: scope.mediaSize.height,
                 positions: this._positions,
+                line: this._line,
+                lineColor: this._lineColor,
                 table: this._table,
                 title: this._title,
                 feeLine: this._feeLine,
@@ -600,6 +621,8 @@ export function paintCashOverlay(id, {
     showStars = true,
     showPositions = true,
     showTable = true,
+    showLine = false,
+    lineColor = '#ffe14a',
     feeRate = TAKER,
     minMove = 0,
     title = 'Nordstern',
@@ -634,6 +657,8 @@ export function paintCashOverlay(id, {
         stars: showStars,
         positions: showPositions,
         table: showTable,
+        line: showLine,
+        lineColor,
         title,
         feeLine,
         anchor,
