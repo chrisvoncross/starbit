@@ -3,6 +3,8 @@ altes/
 mainmexckey.py
 *.egg-info/
 *.json
+orion/cast/runs/**
+orion/models/forecasting/runs/**
 orion/runs/**/ingress.jsonl
 orion/runs/**/events.jsonl
 orion/runs/**/*.jsonl
