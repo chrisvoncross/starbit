@@ -8,7 +8,9 @@ Gespeichert wird eine Rechnung. Sie läuft auf den Daten und gibt behalten oder 
 
 ## Eingabe
 
-Am Schluss einer Kerze sind zwei Quellen schon zu. Die Spalten dieser geschlossenen Kerze. Die Trades bis zu diesem Schluss. Die Trades der nächsten Kerze sind die Antwort und gehen nicht hinein. Jede einzelne Buchänderung liegt nicht als Liste vor.
+Am Schluss sind die geschlossenen Kerzen dieses Symbols bis zu diesem Schluss schon zu, in Zeitfolge (`zielbild.md`). Dazu die Trades bis zu diesem Schluss. Die nächste Kerze und ihre Trades sind die Antwort und gehen nicht hinein. Jede einzelne Buchänderung liegt nicht als Liste vor.
+
+Die Rechnung nennt, welche dieser früheren Kerzen sie liest. Sie darf die früheren Kerzen und danach die Spalten und Trades dieser Kerze in derselben Rechnung lesen. Sie muss das nicht. Die Ausgabe bleibt die zwei Abstände aus `zielbild.md`.
 
 ## Prüfung der Aufgabe
 
@@ -46,7 +48,7 @@ Besser wird sichtbar, wenn ein Teil geändert wird und die späteren Stunden dan
 
 ## Schleife
 
-Schreiben liest die Spalten der geschlossenen Kerze, die Trades bis zu diesem Schluss, beide Speicher und die letzte Ableitung. Es gibt eine Rechnung mit Namen zurück. Sind die Speicher leer, ist die Rechnung frei ([DiscoPER](https://arxiv.org/abs/2607.01131)).
+Schreiben liest die geschlossenen Kerzen dieses Symbols bis zu diesem Schluss, die Trades bis zu diesem Schluss, beide Speicher und die letzte Ableitung. Es gibt eine Rechnung mit Namen zurück. Die Rechnung nennt, welche früheren Kerzen sie liest. Sind die Speicher leer, ist die Rechnung frei ([DiscoPER](https://arxiv.org/abs/2607.01131)).
 
 Prüfen liest diese Rechnung und dieselben Daten. Scheitert die Ausführung, bleibt die Rechnung und wird neu geprüft ([AutoDiscovery](https://arxiv.org/abs/2507.00310)). Läuft sie, entscheiden die späteren Stunden über behalten oder verwerfen. Das Ergebnis geht in den passenden Speicher.
 
