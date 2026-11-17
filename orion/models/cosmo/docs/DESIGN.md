@@ -16,6 +16,14 @@ Geprüft wird auf späteren Stunden. Ein gemischter Rest derselben Stunden misch
 
 Ein Zwischenschritt muss diese Stunden nicht allein bestehen. Er bleibt, wenn eine spätere Vermutung ihn benutzt und diese besteht ([Self-Ask](https://arxiv.org/abs/2210.03350); [Asking the Right Questions](https://arxiv.org/abs/2602.19069)).
 
+## Ausgabe
+
+Eine Rechnung kann mehrere Bedingungen in einer Folge enthalten. An einer Zeile gilt die erste Bedingung, welche diese Zeile trifft. Trifft keine, gilt der Mittelpunkt der zwei Abstände auf den Lernstunden. So hat jeder Schluss eine Ausgabe ([Learning Decision Lists](https://people.csail.mit.edu/rivest/pubs/Riv87b.pdf); [The CN2 Induction Algorithm](https://doi.org/10.1007/bf00116835)). Der Mittelpunkt ist die Vergleichsbasis in `zielbild.md`.
+
+Geprüft wird diese eine Ausgabe auf den späteren Stunden. Die Zeilen der Prüfung sind die Zeilen der Ausgabe. Eine Wertung, die jede Bedingung für sich auf anderen Zeilen besteht, gilt nicht.
+
+Welche Folge besser ist, zeigt der Vergleich auf den späteren Stunden. Ein Optimum der Folge steht vor diesem Vergleich nicht fest.
+
 ## Gebraucht
 
 Für eine feststehende spätere Vermutung wird jede Teilmenge ihrer Schritte auf den späteren Stunden geprüft. Ein Schritt ist gebraucht, wenn jede Teilmenge, die besteht, ihn enthält. Er ist nur benutzt, wenn eine bestehende Teilmenge ihn enthält und eine andere bestehende ihn nicht enthält ([Feature Necessity and Relevancy](https://arxiv.org/abs/2210.15675)).
@@ -58,3 +66,5 @@ Jeder Teil schreibt, was er gelesen hat und was er zurückgegeben hat. Prüfen s
 - [Asking the Right Questions](https://arxiv.org/abs/2602.19069), 2026.
 - [Feature Necessity and Relevancy](https://arxiv.org/abs/2210.15675), 2022.
 - [Disentangling Interactions and Dependencies in Feature Attribution](https://arxiv.org/abs/2410.23772), 2024.
+- [Learning Decision Lists](https://people.csail.mit.edu/rivest/pubs/Riv87b.pdf), Rivest, 1987.
+- [The CN2 Induction Algorithm](https://doi.org/10.1007/bf00116835), Clark und Niblett, 1989.
