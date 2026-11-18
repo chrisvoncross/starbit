@@ -6,6 +6,8 @@ Die Fähigkeiten stehen in `ARCHITECTURE.md`. Hier stehen die Festlegungen für 
 
 Gespeichert wird eine Rechnung. Sie läuft auf den Daten und gibt behalten oder verworfen zurück. Der Satz daneben ist nur ihr Name ([DiscoPER](https://arxiv.org/abs/2607.01131)).
 
+Das Modell gibt eine Python-Funktion zurück und nennt dazu, welche früheren geschlossenen Kerzen sie liest. Der Leser lädt diese Kerzen und die Deals bis zu diesem Schluss, bevor die Funktion läuft. Die Funktion sieht nur diese geladenen Reihen und gibt die zwei Abstände zurück. Sie öffnet keine Datei, kein Netz und keine weitere Stunde. Welche Stunden lernen und welche später sind, setzt der Start des Laufs.
+
 ## Eingabe
 
 Am Schluss sind die geschlossenen Kerzen dieses Symbols bis zu diesem Schluss schon zu, in Zeitfolge (`zielbild.md`). Dazu die Trades bis zu diesem Schluss. Die nächste Kerze und ihre Trades sind die Antwort und gehen nicht hinein. Jede einzelne Buchänderung liegt nicht als Liste vor.
@@ -55,6 +57,18 @@ Prüfen liest diese Rechnung und dieselben Daten. Scheitert die Ausführung, ble
 Ableiten liest nur die beiden Speicher, nicht die nächste Kerze. Es gibt die Vorgabe für das nächste Schreiben zurück: eine Lücke, einen Störfaktor oder eine Rechnung aus mehreren bestandenen ([DiscoPER](https://arxiv.org/abs/2607.01131)).
 
 Die Teilmengen und der neue Lauf ohne einen Schritt bleiben Prüfungen an einer bestandenen Vermutung. Sie sind kein vierter Teil.
+
+## Ordner
+
+Der Code liegt unter `orion/models/cosmo/`. Die Dokumente bleiben in `docs/`.
+
+- `read/` liest die geschlossenen Kerzen dieses Symbols bis zum Schluss und die Trades bis zum Schluss über den vorhandenen Ingress-Leser.
+- `write/` ist Schreiben.
+- `test/` ist Prüfen.
+- `derive/` ist Ableiten.
+- `record/` schreibt je Teil, was er gelesen und zurückgegeben hat.
+
+Die zwei Speicher sind Dateien des Laufs, kein Quellordner. Ein Netz hat keinen Ordner. Welches Modell Schreiben aufruft, steht hier nicht fest.
 
 ## Protokoll
 

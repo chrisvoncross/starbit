@@ -4,6 +4,12 @@ Dieser Ordner ist der Trainingsstrom. Eine versiegelte Stunde ist eine Datei. De
 
 Skala, Normalisierung und die Bedeutung des Ziels gehören dem Modell. Dieser Ordner rechnet sie nicht. Der Bauplan steht in `ARCHITECTURE.md`.
 
+Es gibt keinen Shell-Start. Der Schalter für das Deals-Band ist das Argument `deals`. `deals=False` öffnet keine Datei. Die Tagesdatei bleibt auf der Platte. Der Aufrufer hält eine Stunde. `release` wirft sie weg.
+
+```python
+deals = open_deals(hours, read_deal_hour, deals=True, holdout=holdout, start=k, log=log)
+```
+
 ```python
 log = Log(path)
 with Stream(hours, read, holdout=holdout, start=k, last_trade_ms=last_trade_ms, log=log) as stream:
@@ -30,4 +36,4 @@ Die gehaltene Stunde. Die eine Datei im Vorgriff. Der Ring aller Symbole. Der Ba
 
 ## Was nicht hier liegt
 
-Eine zusammengelegte Serie über viele Stunden und der Cache dieser Serie. Ein Fenster von sechzehn offenen Stunden. Eine Deal-Spur. Eine Skala. Ein Checkpoint des Modells. Eine Aufteilung auf viele GPUs. Holdout-Stunden werden nie gelesen. Ein Loch und eine Holdout-Stunde verwerfen die wartende Zeile. `live` ist der spätere Platz neben `read` und `feed` und ist nicht gebaut. Der PyTorch-Loader darf den Batch pinnen und eine feste kleine Zahl weiterer Batches holen. Er öffnet keine Datei.
+Eine zusammengelegte Serie über viele Stunden und der Cache dieser Serie. Ein Fenster von sechzehn offenen Stunden. Eine Skala. Ein Checkpoint des Modells. Eine Aufteilung auf viele GPUs. Holdout-Stunden werden nie gelesen. Ein Loch und eine Holdout-Stunde verwerfen die wartende Zeile. `live` ist der spätere Platz neben `read` und `feed` und ist nicht gebaut. Der PyTorch-Loader darf den Batch pinnen und eine feste kleine Zahl weiterer Batches holen. Er öffnet keine Datei.

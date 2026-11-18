@@ -18,6 +18,7 @@ Zwei Gruppen, weil es zwei Gründe zur Änderung gibt. `read` macht aus einer Da
 | `read/frame.py` | Aus einer Stunde die Reihen je Symbol. Lücken bleiben Lücken. 204 Spuren werden hier auf 216 ergänzt. Ein Vektor, der schon 216 breit ist, wird durchgereicht. |
 | `read/exclude.py` | Die Tick-Regel auf Stunden, die der Strom schon ausgeliefert hat. |
 | `read/stream.py` | Eine Stunde ausliefern. Eine folgende Datei im Vorgriff. Auf `release` die Kerzen wegwerfen. Holdout nicht öffnen. Ab `start` lesen. |
+| `read/deals.py` | Eine Stunde Deals aus der Tagesdatei. `deals=False` öffnet nichts. `release` wirft die Stunde weg. |
 | `feed/ring.py` | Je Symbol der Ring fester Länge. |
 | `feed/batch.py` | Batches fester Größe. Symbole gemischt, Stunden nicht. |
 | `feed/cursor.py` | Die Neustart-Stelle. `mark` kommt vom Aufrufer und läuft, solange die Stunde im Speicher ist. |
@@ -70,7 +71,7 @@ Das Symbol bleibt in der Stunde, die es trifft. Ab der nächsten Stunde fehlt es
 
 - Die zusammengelegte Serie über alle genannten Stunden, und der Cache dieser Serie im Speicher oder als `.npz`. Wer die Spanne eines Symbols als ein Feld will, läuft den Strom und legt nur diese Spanne selbst zusammen. Dieser Ordner tut das nicht.
 - Ein Fenster von sechzehn gleichzeitig offenen Stunden. Die Grenze ist eine Stunde plus eine Datei im Vorgriff.
-- Die Deal-Spur eines Tages, zusammengelegt über die genannten Tage. Wer sie später braucht, bekommt einen zweiten Cursor mit derselben `release`-Regel, einen Tag in der Hand. Dieser Bauplan baut ihn nicht.
+- Die Deal-Spur, zusammengelegt über die genannten Tage. `read/deals.py` öffnet die Tagesdatei, gibt eine Stunde heraus und behält den Tag nicht. `deals=False` öffnet keine Datei.
 - Den Schemaschlüssel des Caches. Eine falsche Breite und ein unbekannter Typ brechen hier ohne Cache ab.
 
 ## Darüber hinaus
